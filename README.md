@@ -1,2 +1,2 @@
 # GSETLang
-Great SET Language 
+Go SET Language 
