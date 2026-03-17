@@ -1,6 +1,7 @@
 package main
 
 import "strings"
+import "fmt"
 
 type GSETConfig struct {
 	Keywords map[string]string //Keywords var with the type of map and input string, output string. pair
@@ -12,7 +13,7 @@ func ParseGSet(src string) (GSETConfig, string){ //output only defined the type 
 	
 	parts := strings.SplitN(src,"---",2)
 	
-	
+	fmt.log(conf, parts)
 	//if code part after split is lesser than 2
 	if len(parts) < 2 {
 		//return config, which is blank, and the spurce code
@@ -21,6 +22,7 @@ func ParseGSet(src string) (GSETConfig, string){ //output only defined the type 
 	}
 	
 	header := parts[0] // the config header
+	print(header)
 	lines := strings.SplitN(header, "\n") //take every line out from header with return key
 	
 	for lines, line := range lines{ //for every created var line in lines
