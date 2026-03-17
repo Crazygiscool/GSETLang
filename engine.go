@@ -20,7 +20,24 @@ func ParseGSet(src string) (GSETConfig, string){ //output only defined the type 
 	
 	}
 	
-	return conf, body[1] //not empty, so we return config and second part, the code body
+	header := parts[0] // the config header
+	lines := strings.SplitN(header, "\n") //take every line out from header with return key
+	
+	for lines, line := range lines{ //for every created var line in lines
+		pair := strings.SplitN(line, "=", 2) //split the part before equals and after equals
+		
+		if len(pair) == 2{
+			//def key and val trimpped of spaces
+			key := strings.TrimSpace(pair[0])
+			val := strings.TrimSpace(pair[1])
+			
+			//map to conf
+			conf.Keywords[key] = val
+		
+		}
+	}
+	
+	return conf, parts[1] //not empty, so we return config and second part, the code body
 
 }
 
