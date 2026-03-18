@@ -1,0 +1,4 @@
+shout=PRINT
+stop=EXIT
+---
+shout "Hello from Crazygiscool!"
