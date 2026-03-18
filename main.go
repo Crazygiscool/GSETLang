@@ -10,8 +10,13 @@ func main() {
 	testInput := fileparse("./test/test.gset")
 
 	config, body := ParseGSet(testInput)
+	translated := Translate(config, body)
 	fmt.Println("Keywords found:", config.Keywords)
 	fmt.Println("Code body:", body)
+	fmt.Println("Translated: ", translated)
+
+	Execute(translated)
+
 }
 
 func fileparse(filepath string) string {

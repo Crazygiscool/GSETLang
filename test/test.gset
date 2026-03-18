@@ -1,4 +1,3 @@
-shout=PRINT
-stop=EXIT
+shout=fmt.Println
 ---
-shout "Hello from Crazygiscool!"
+shout("Hello from Crazygiscool!")

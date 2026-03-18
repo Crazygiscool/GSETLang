@@ -1,6 +1,11 @@
 package main
 
-import "strings"
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+)
 
 type GSETConfig struct {
 	Keywords map[string]string //Keywords var with the type of map and input string, output string. pair
@@ -38,4 +43,53 @@ func ParseGSet(src string) (GSETConfig, string) { //output only defined the type
 
 	return conf, parts[1] //not empty, so we return config and second part, the code body
 
+}
+
+func Translate(conf GSETConfig, body string) string {
+
+	body = strings.ReplaceAll(body, "(", " ( ")
+	body = strings.ReplaceAll(body, ")", " ) ")
+	body = strings.ReplaceAll(body, "\"", " \" ")
+
+	words := strings.Fields(body)
+
+	var translated []string
+
+	for _, word := range words {
+		newWord, exists := conf.Keywords[word]
+
+		if exists {
+			translated = append(translated, newWord)
+		} else {
+			translated = append(translated, word)
+		}
+	}
+
+	return strings.Join(translated, "")
+}
+
+func Execute(translatedCode string) {
+	wrapper := fmt.Sprintf(`package main
+import "fmt"
+func main() {
+    %s
+}`, translatedCode)
+
+	err := os.WriteFile("temp_exec.go", []byte(wrapper), 0644)
+	if err != nil {
+		fmt.Println("Error creating temp file:", err)
+		return
+	}
+
+	cmd := exec.Command("go", "run", "temp_exec.go")
+
+	// Connect the command's output to terminal
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	fmt.Println("--- RUNNING GSET OUTPUT ---")
+	cmd.Run()
+
+	// Clean up (Optional: delete the temp file)
+	//os.Remove("temp_exec.go")
 }
