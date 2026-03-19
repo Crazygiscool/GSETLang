@@ -1,14 +1,31 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 func main() {
-    // A sample input string with a header and code
-    testInput := "shout=PRINT\nstop=EXIT\n---\nshout \"Hello from iSH!\""
-    
-    config, body := ParseGSet(testInput)
-    
-    // Make sure to add "fmt" to your imports at the top!
-    fmt.Println("Keywords found:", config.Keywords)
-    fmt.Println("Code body:", body)
+	// A sample input string with a header and code
+	testInput := fileparse("./test/test.gset")
+
+	config, body := ParseGSet(testInput)
+	translated := Translate(config, body)
+	fmt.Println("Keywords found:", config.Keywords)
+	fmt.Println("Code body:", body)
+	fmt.Println("Translated: ", translated)
+
+	Execute(translated)
+
+}
+
+func fileparse(filepath string) string {
+	content, err := os.ReadFile(filepath)
+
+	if err != nil {
+		fmt.Println("Error reading file:", err)
+		return ""
+	}
+
+	return string(content)
 }
