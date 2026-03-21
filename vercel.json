@@ -1,3 +1,5 @@
 {
-  "root": "docs"
+  "buildCommand": "cd docs && npm run build",
+  "outputDirectory": "docs/dist",
+  "installCommand": "cd docs && npm install"
 }
