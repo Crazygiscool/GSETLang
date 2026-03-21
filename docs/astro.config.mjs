@@ -1,9 +1,11 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import vercel from '@astrojs/vercel';
 
 export default defineConfig({
-	site: 'https://gsetlang.vercel.app',
+	output: 'static',
+	adapter: vercel(),
 	integrations: [
 		starlight({
 			title: 'GSET - Generic Syntax Extension Tool',
