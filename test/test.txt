@@ -1,0 +1,3 @@
+shout=fmt.Println
+---
+shout("Testing with .txt file!")

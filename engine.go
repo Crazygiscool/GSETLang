@@ -126,20 +126,65 @@ func isLetter(ch byte) bool {
 	return 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z' || ch == '_'
 }
 
-func Execute(translatedCode string) {
+type Transpiler struct {
+	cfg GSETConfig
+}
+
+func NewTranspiler(cfg GSETConfig) *Transpiler {
+	return &Transpiler{cfg: cfg}
+}
+
+func (t *Transpiler) Translate(ast []Statement) string {
+	var out string
+	for _, stmt := range ast {
+		out += t.translateStatement(stmt)
+	}
+	return out
+}
+
+func (t *Transpiler) translateStatement(stmt Statement) string {
+	switch s := stmt.(type) {
+	case *CallExpression:
+		return t.translateCallExpression(s)
+	}
+	return ""
+}
+
+func (t *Transpiler) translateCallExpression(ce *CallExpression) string {
+	fn := ce.Function
+	if mapping, ok := t.cfg.Keywords[fn]; ok {
+		fn = mapping
+	}
+	var args []string
+	for _, arg := range ce.Arguments {
+		args = append(args, t.translateExpression(arg))
+	}
+	return fn + "(" + join(args, ", ") + ")"
+}
+
+func (t *Transpiler) translateExpression(expr Expression) string {
+	switch e := expr.(type) {
+	case *StringLiteral:
+		return fmt.Sprintf(`"%s"`, e.Value)
+	}
+	return ""
+}
+
+func Execute(code string) {
 	wrapper := fmt.Sprintf(`package main
 import "fmt"
 func main() {
     %s
-}`, translatedCode)
+}`, code)
 
-	err := os.WriteFile("temp_exec.go", []byte(wrapper), 0644)
+	tmpFile := "/tmp/gset_exec.go"
+	err := os.WriteFile(tmpFile, []byte(wrapper), 0644)
 	if err != nil {
 		fmt.Println("Error creating temp file:", err)
 		return
 	}
 
-	cmd := exec.Command("go", "run", "temp_exec.go")
+	cmd := exec.Command("go", "run", tmpFile)
 
 	// Connect the command's output to terminal
 	cmd.Stdout = os.Stdout

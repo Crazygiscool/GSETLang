@@ -3,37 +3,30 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 )
 
 func main() {
-	testInput := fileparse("./test/test.gset")
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: gset <filename>")
+		os.Exit(1)
+	}
+
+	testInput := fileparse(os.Args[1])
 	config, body := ParseGSet(testInput)
 
 	l := NewLexer(body)
-	var translatedParts []string
+	p := NewParser(l)
+	ast := p.ParseProgram()
 
-	for {
-		tok := l.NextToken()
-		if tok.Type == TOK_EOF {
-			break
-		}
+	fmt.Println("--- AST ---")
+	fmt.Println(p.String())
 
-		// Check if IDENT is a custom keyword from config
-		val, exists := config.Keywords[tok.Literal]
+	fmt.Println("--- TRANSLATED ---")
+	t := NewTranspiler(config)
+	translated := t.Translate(ast)
+	fmt.Println(translated)
 
-		if tok.Type == TOK_IDENT && exists {
-			translatedParts = append(translatedParts, val)
-		} else if tok.Type == TOK_STRING {
-			translatedParts = append(translatedParts, fmt.Sprintf(`"%s"`, tok.Literal))
-		} else {
-			translatedParts = append(translatedParts, tok.Literal)
-		}
-	}
-
-	finalCode := strings.Join(translatedParts, "")
-	fmt.Println("Final Code to Exec:", finalCode)
-	Execute(finalCode)
+	Execute(translated)
 }
 
 func fileparse(filepath string) string {
