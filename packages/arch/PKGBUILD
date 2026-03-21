@@ -1,0 +1,32 @@
+pkgname=gset
+pkgver=2.0.2
+pkgrel=1
+pkgdesc="GSET - Generic Syntax Extension Tool. Write in any syntax, compile to any language."
+arch=(x86_64 aarch64 armv7h)
+url="https://github.com/gset-lang/gset"
+license=(MIT)
+depends=(glibc)
+makedepends=(go)
+provides=(gset)
+conflicts=()
+replaces=()
+backup=()
+options=(!strip)
+source=("gset-${pkgver}.tar.gz::https://github.com/gset-lang/gset/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+    cd "$srcdir/gset-$pkgver"
+    go mod download
+}
+
+build() {
+    cd "$srcdir/gset-$pkgver"
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o gset .
+}
+
+package() {
+    install -Dm755 "$srcdir/gset-$pkgver/gset" "$pkgdir/usr/bin/gset"
+    install -Dm644 "$srcdir/gset-$pkgver/gset.conf" "$pkgdir/etc/gset.conf"
+    install -Dm644 "$srcdir/gset-$pkgver/LICENSE" "$pkgdir/usr/share/licenses/gset/LICENSE"
+}

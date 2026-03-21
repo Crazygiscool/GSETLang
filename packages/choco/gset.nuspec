@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata>
+    <id>gset</id>
+    <version>2.0.2</version>
+    <title>GSET (Generic Syntax Extension Tool)</title>
+    <authors>GSET Team</authors>
+    <projectUrl>https://github.com/gset-lang/gset</projectUrl>
+    <description>
+      GSET - Generic Syntax Extension Tool
+
+      Write in any language syntax, compile to any language.
+
+      Features:
+      - Write code in Python, Java, JavaScript, Go, or custom syntax
+      - Map keywords to any target language functions
+      - Configurable via gset.conf
+      - Cross-platform compiler support
+    </description>
+    <tags>gset language transpiler compiler syntax</tags>
+    <licenseUrl>https://github.com/gset-lang/gset/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <releaseNotes>
+      - Initial release
+      - Supports Python, JavaScript, Java, Go, Ruby, PHP, and more
+      - Configurable keyword mappings
+      - Configurable compiler settings
+    </releaseNotes>
+  </metadata>
+  <files>
+    <file src="dist\gset-windows-amd64.exe" target="tools\gset.exe" />
+    <file src="gset.conf" target="tools\gset.conf" />
+  </files>
+</package>

@@ -1,0 +1,19 @@
+Source: gset
+Section: devel
+Priority: optional
+Maintainer: GSET Team <gset@example.com>
+Build-Depends: golang-go
+Standards-Version: 4.6.0
+
+Package: gset
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: GSET - Generic Syntax Extension Tool
+ GSET allows you to write code in any language syntax and compile it 
+ to any other language using configurable keyword mappings.
+ .
+ Features:
+  - Write in Python, Java, JavaScript, Go, or custom syntax
+  - Configurable via gset.conf
+  - Supports multiple target compilers
+Homepage: https://github.com/gset-lang/gset

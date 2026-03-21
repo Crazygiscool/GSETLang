@@ -1,0 +1,31 @@
+# GSET AUR Package
+# Upload this to AUR: https://aur.archlinux.org/packages/gset/
+
+pkgname=gset-git
+pkgver=2.0.2
+pkgrel=1
+pkgdesc="GSET - Generic Syntax Extension Tool. Write in any language syntax, compile to any language."
+arch=(x86_64 aarch64)
+url="https://github.com/gset-lang/gset"
+license=(MIT)
+depends=(go)
+makedepends=(git)
+provides=(${pkgname})
+conflicts=(${pkgname})
+source=("git+https://github.com/gset-lang/gset.git")
+md5sums=("SKIP")
+
+pkgver() {
+    cd "$srcdir/gset"
+    git describe --tags --abbrev=0 2>/dev/null || echo "1.0.0"
+}
+
+build() {
+    cd "$srcdir/gset"
+    go build -o gset .
+}
+
+package() {
+    install -Dm755 "${srcdir}/gset/gset" "${pkgdir}/usr/bin/gset"
+    install -Dm644 "${srcdir}/gset/gset.conf" "${pkgdir}/etc/gset.conf"
+}

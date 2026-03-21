@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	CGO_ENABLED=0 go build -ldflags="-s -w" -o gset .
+
+override_dh_install:
+	dh_install -p gset usr/bin/gset /usr/bin/
+	dh_install -p gset etc/gset.conf /etc/
+	dh_install -p gset debian/copyright /usr/share/doc/gset/
