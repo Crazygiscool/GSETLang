@@ -1,0 +1,121 @@
+/* GSET Custom Styles */
+
+/* Custom accent colors */
+:root {
+	--sl-hue-accent: 142; /* Green */
+	--sl-saturation-accent: 68%;
+}
+
+/* Override accent color with a custom green */
+:root {
+	--sl-color-accent-low: #0f2e1f;
+	--sl-color-accent: #22c55e;
+	--sl-color-accent-high: #86efac;
+}
+
+/* Dark mode accent */
+:root[data-theme='dark'] {
+	--sl-color-accent-low: #0f2e1f;
+	--sl-color-accent: #4ade80;
+	--sl-color-accent-high: #bbf7d0;
+}
+
+/* Code block styling */
+.expressive-code .frame {
+	border-radius: 0.5rem;
+}
+
+/* Custom hero styling */
+.hero-html {
+	text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Card styling */
+.feature-cards {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	gap: 1.5rem;
+	margin: 2rem 0;
+}
+
+.feature-card {
+	background: var(--sl-color-gray-6);
+	padding: 1.5rem;
+	border-radius: 0.75rem;
+	border: 1px solid var(--sl-color-gray-5);
+	transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.feature-card:hover {
+	transform: translateY(-2px);
+	border-color: var(--sl-color-accent);
+}
+
+/* Sidebar enhancements */
+.sidebar-content {
+	font-size: 0.95rem;
+}
+
+/* Navigation highlight */
+.sidebar-content a[href*="current"] {
+	background: linear-gradient(90deg, var(--sl-color-accent-low), transparent);
+}
+
+/* Code block title */
+.code-title {
+	background: var(--sl-color-gray-5);
+	border-radius: 0.5rem 0.5rem 0 0;
+	padding: 0.5rem 1rem;
+	font-size: 0.85rem;
+	color: var(--sl-color-gray-3);
+}
+
+/* Terminal style */
+.terminal {
+	background: #0d1117;
+	border-radius: 0.5rem;
+	padding: 1rem;
+	font-family: 'Fira Code', 'JetBrains Mono', monospace;
+	font-size: 0.9rem;
+}
+
+.terminal .prompt {
+	color: #22c55e;
+}
+
+.terminal .output {
+	color: #e2e8f0;
+}
+
+/* Callout styling */
+.callout-note {
+	background: rgba(34, 197, 94, 0.1);
+	border-left: 4px solid #22c55e;
+	padding: 1rem;
+	border-radius: 0 0.5rem 0.5rem 0;
+	margin: 1rem 0;
+}
+
+.callout-warning {
+	background: rgba(234, 179, 8, 0.1);
+	border-left: 4px solid #eab308;
+	padding: 1rem;
+	border-radius: 0 0.5rem 0.5rem 0;
+	margin: 1rem 0;
+}
+
+/* Language badges */
+.lang-badge {
+	display: inline-block;
+	padding: 0.25rem 0.5rem;
+	border-radius: 0.25rem;
+	font-size: 0.75rem;
+	font-weight: 600;
+	margin-right: 0.5rem;
+}
+
+.lang-badge.python { background: #3776ab; color: white; }
+.lang-badge.javascript { background: #f7df1e; color: black; }
+.lang-badge.java { background: #ed8b00; color: white; }
+.lang-badge.go { background: #00add8; color: white; }
+.lang-badge.ruby { background: #cc342d; color: white; }
