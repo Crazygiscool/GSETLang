@@ -71,8 +71,15 @@ if [[ "$(uname)" != "Darwin" ]]; then
 EOF
 
     # Create DMG
-    echo "[3/3] Creating DMG..."
-    hdiutil create -volname "GSET-${VERSION}" -srcfolder "$BUILD_DIR/GSET.app" -ov "$BUILD_DIR/GSET-${VERSION}.dmg"
+    if command -v hdiutil &> /dev/null; then
+        echo "[3/3] Creating DMG..."
+        hdiutil create -volname "GSET-${VERSION}" -srcfolder "$BUILD_DIR/GSET.app" -ov "$BUILD_DIR/GSET-${VERSION}.dmg"
+    else
+        echo "[3/3] Creating ZIP archive (hdiutil not available on Linux)..."
+        cd "$BUILD_DIR"
+        zip -r "GSET-${VERSION}-macOS.zip" GSET.app
+        cd "$REPO_DIR"
+    fi
     
     echo ""
     echo "=== Build Complete ==="

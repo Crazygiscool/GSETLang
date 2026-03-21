@@ -1,0 +1,16 @@
+# dput configuration for GSET PPA upload
+
+# Create this file at: ~/.dput.cf
+
+[ppa]
+fqdn = ppa.launchpadcontent.net
+method = https
+incoming = ~crazygiscool/ubuntu/ppa
+login = crunchygiscool
+
+# Alternative if above doesn't work - use legacy:
+[ppa-legacy]
+fqdn = ppa.launchpad.net
+method = ftp
+incoming = ~crazygiscool/ppa
+login = anonymous
