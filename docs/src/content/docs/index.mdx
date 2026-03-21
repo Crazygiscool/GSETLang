@@ -1,0 +1,48 @@
+---
+title: GSET - Generic Syntax Extension Tool
+description: Write in any language syntax, compile to any language runtime.
+template: splash
+hero:
+  tagline: Write code in Python syntax, compile to Java. Use Go patterns in JavaScript. The syntax is yours to choose.
+  actions:
+    - text: Get Started
+      link: /getting-started/introduction/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/Crazygiscool/GSETLang
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What is GSET?
+
+GSET (Generic Syntax Extension Tool) is a transpiler that lets you write code in any language syntax and compile it to any target language's runtime. Whether you prefer Python's elegance, JavaScript's flexibility, or Go's simplicity, GSET lets you express your logic in your preferred syntax.
+
+<CardGrid stagger>
+  <Card title="Any Syntax, Any Target" icon="rocket">
+    Write in Python syntax and compile to Java, or use JavaScript patterns in Go code.
+  </Card>
+  <Card title="Language Keyword Mapping" icon="puzzle">
+    Define custom keyword mappings between source and target languages.
+  </Card>
+  <Card title="External Configuration" icon="setting">
+    All settings managed through gset.conf - no hardcoded values.
+  </Card>
+  <Card title="Multi-Compiler Support" icon="rocket">
+    Supports Python, Node.js, Java, Go, Ruby, PHP, and more.
+  </Card>
+</CardGrid>
+
+## Quick Example
+
+Write your code in any syntax:
+
+```python
+main() {
+    print("Hello from GSET!")
+}
+```
+
+Compile it to your target language. GSET handles the translation.
