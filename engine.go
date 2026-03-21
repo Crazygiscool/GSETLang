@@ -45,27 +45,85 @@ func ParseGSet(src string) (GSETConfig, string) { //output only defined the type
 
 }
 
-func Translate(conf GSETConfig, body string) string {
+type Lexer struct {
+	input        string
+	position     int  // current position (current char)
+	readPosition int  // next position (after current char)
+	ch           byte // current char under examination
+}
 
-	body = strings.ReplaceAll(body, "(", " ( ")
-	body = strings.ReplaceAll(body, ")", " ) ")
-	body = strings.ReplaceAll(body, "\"", " \" ")
+func NewLexer(input string) *Lexer {
+	l := &Lexer{input: input}
+	l.readChar()
+	return l
+}
 
-	words := strings.Fields(body)
+func (l *Lexer) readChar() {
+	if l.readPosition >= len(l.input) {
+		l.ch = 0 // End of input
+	} else {
+		l.ch = l.input[l.readPosition]
+	}
+	l.position = l.readPosition
+	l.readPosition++
+}
 
-	var translated []string
+func (l *Lexer) NextToken() Token {
+	var tok Token
+	l.skipWhitespace()
 
-	for _, word := range words {
-		newWord, exists := conf.Keywords[word]
-
-		if exists {
-			translated = append(translated, newWord)
-		} else {
-			translated = append(translated, word)
+	switch l.ch {
+	case '(':
+		tok = Token{TOK_LPAREN, "("}
+	case ')':
+		tok = Token{TOK_RPAREN, ")"}
+	case '"':
+		tok.Type = TOK_STRING
+		tok.Literal = l.readString()
+	case 0:
+		tok.Type = TOK_EOF
+		tok.Literal = ""
+	default:
+		if isLetter(l.ch) {
+			tok.Literal = l.readIdentifier()
+			tok.Type = TOK_IDENT
+			return tok
 		}
+		tok = Token{TOK_ILLEGAL, string(l.ch)}
 	}
 
-	return strings.Join(translated, "")
+	l.readChar()
+	return tok
+}
+
+// Helpers
+func (l *Lexer) skipWhitespace() {
+	for l.ch == ' ' || l.ch == '\t' || l.ch == '\n' || l.ch == '\r' {
+		l.readChar()
+	}
+}
+
+func (l *Lexer) readString() string {
+	pos := l.position + 1
+	for {
+		l.readChar()
+		if l.ch == '"' || l.ch == 0 {
+			break
+		}
+	}
+	return l.input[pos:l.position]
+}
+
+func (l *Lexer) readIdentifier() string {
+	pos := l.position
+	for isLetter(l.ch) {
+		l.readChar()
+	}
+	return l.input[pos:l.position]
+}
+
+func isLetter(ch byte) bool {
+	return 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z' || ch == '_'
 }
 
 func Execute(translatedCode string) {
