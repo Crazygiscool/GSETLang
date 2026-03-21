@@ -16,14 +16,13 @@ func main() {
 
 	l := NewLexer(body)
 	p := NewParser(l)
-	ast := p.ParseProgram()
 
 	fmt.Println("--- AST ---")
 	fmt.Println(p.String())
 
 	fmt.Println("--- TRANSLATED ---")
 	t := NewTranspiler(config)
-	translated := t.Translate(ast)
+	translated := t.Translate(p.program)
 	fmt.Println(translated)
 
 	Execute(translated)
