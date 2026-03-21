@@ -16,4 +16,4 @@ Description: GSET - Generic Syntax Extension Tool
   - Write in Python, Java, JavaScript, Go, or custom syntax
   - Configurable via gset.conf
   - Supports multiple target compilers
-Homepage: https://github.com/gset-lang/gset
+Homepage: https://github.com/Crazygiscool/GSETLang

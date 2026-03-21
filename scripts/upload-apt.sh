@@ -1,5 +1,7 @@
 #!/bin/bash
 # APT Repository Upload Script
+# Version: 2.0.2
+# License: CC BY-NC 4.0
 # Usage: ./scripts/upload-apt.sh [version]
 
 set -e
@@ -7,9 +9,11 @@ set -e
 VERSION=${1:-"2.0.2"}
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DEBIAN_DIR="$REPO_DIR/packages/debian"
+GITHUB_REPO="Crazygiscool/GSETLang"
 
 echo "=== GSET APT Upload Script ==="
 echo "Version: $VERSION"
+echo "GitHub: https://github.com/$GITHUB_REPO"
 echo
 
 # Check prerequisites
@@ -27,6 +31,7 @@ CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$VERSION" -o gset .
 # Create package directory structure
 echo "[2/6] Creating package structure..."
 PKG_DIR="/tmp/gset-${VERSION}-amd64"
+rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR/usr/bin"
 mkdir -p "$PKG_DIR/etc"
 mkdir -p "$PKG_DIR/usr/share/doc/gset"
@@ -53,14 +58,14 @@ Description: GSET - Generic Syntax Extension Tool
   - Write in Python, Java, JavaScript, Go, or custom syntax
   - Configurable via gset.conf
   - Supports multiple target compilers
-Homepage: https://github.com/gset-lang/gset
+Homepage: https://github.com/${GITHUB_REPO}
 EOF
 
 # Create changelog
 cat > "$PKG_DIR/usr/share/doc/gset/changelog" <<EOF
 gset (${VERSION}) stable; urgency=medium
 
-  * Initial release
+  * Initial release v${VERSION}
 
  -- GSET Team <gset@example.com>  $(date -R)
 EOF
@@ -71,13 +76,13 @@ cd "$PKG_DIR"
 find . -type f ! -path './DEBIAN/*' -exec md5sum {} \; > DEBIAN/md5sums
 cd "$REPO_DIR"
 
-# Create postinst (optional)
+# Create postinst
 cat > "$PKG_DIR/DEBIAN/postinst" <<EOF
 #!/bin/sh
 set -e
 case "$1" in
     configure)
-        echo "GSET installed! Config at /etc/gset.conf"
+        echo "GSET v${VERSION} installed! Config at /etc/gset.conf"
         ;;
 esac
 exit 0
@@ -89,23 +94,30 @@ echo "[3/6] Building .deb package..."
 dpkg-deb --build "$PKG_DIR" /tmp/gset_${VERSION}_amd64.deb
 
 echo "[4/6] Package created: /tmp/gset_${VERSION}_amd64.deb"
-echo "[5/6] Signing package (requires GPG key)..."
-echo "   gpg --armor --detach-sign /tmp/gset_${VERSION}_amd64.deb"
 
-echo "[6/6] Next steps to upload to Launchpad/Debian:"
+echo "[5/6] Signing (optional)..."
+echo "   To sign: gpg --armor --detach-sign /tmp/gset_${VERSION}_amd64.deb"
+
+echo "[6/6] Upload options:"
 echo ""
-echo "Option 1: Upload to personal PPA on Launchpad"
-echo "   sudo apt-get install dput"
-echo "   dput ppa:yourusername/ppa /tmp/gset_${VERSION}_amd64.deb"
+echo "Option A: Launchpad PPA (recommended)"
+echo "   1. Create PPA at https://launchpad.net/~$USER/+faq"
+echo "   2. Install dput: sudo apt install dput"
+echo "   3. Create ~/.dput.cf:"
+echo "      [ppa]"
+echo "      fqdn = ppa.launchpadcontent.net"
+echo "      method = https"
+echo "      incoming = ~YOUR_USERNAME/ubuntu/ppa"
+echo "   4. Upload: dput ppa:YOUR_USERNAME/ppa /tmp/gset_${VERSION}_amd64.deb"
 echo ""
-echo "Option 2: Create your own apt repository"
-echo "   sudo apt-get install reprepro"
-echo "   mkdir -p /var/www/debian"
-echo "   cp gset_${VERSION}_amd64.deb /var/www/debian/"
-echo "   cd /var/www/debian"
-echo "   reprepro -b . includedeb stable gset_${VERSION}_amd64.deb"
+echo "Option B: Create your own apt repo"
+echo "   1. Install reprepro: sudo apt install reprepro"
+echo "   2. Create repo directory and config"
+echo "   3. Run: reprepro -b . include stable gset_${VERSION}_amd64.deb"
+echo "   4. Host on any web server"
 echo ""
-echo "Option 3: Upload directly to Debian (requires maintainer)"
-echo "   Visit: https://packages.debian.org/upload"
+echo "Option C: Direct download"
+echo "   Simply host the .deb file for users to download and install"
+echo "   Users can run: sudo dpkg -i gset_${VERSION}_amd64.deb"
 echo ""
-echo "Package ready at: /tmp/gset_${VERSION}_amd64.deb"
+echo "Package ready: /tmp/gset_${VERSION}_amd64.deb"

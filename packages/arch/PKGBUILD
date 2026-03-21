@@ -3,8 +3,8 @@ pkgver=2.0.2
 pkgrel=1
 pkgdesc="GSET - Generic Syntax Extension Tool. Write in any syntax, compile to any language."
 arch=(x86_64 aarch64 armv7h)
-url="https://github.com/gset-lang/gset"
-license=(MIT)
+url="https://github.com/Crazygiscool/GSETLang"
+license=(CC-BY-NC-4.0)
 depends=(glibc)
 makedepends=(go)
 provides=(gset)
@@ -12,7 +12,7 @@ conflicts=()
 replaces=()
 backup=()
 options=(!strip)
-source=("gset-${pkgver}.tar.gz::https://github.com/gset-lang/gset/archive/refs/tags/v${pkgver}.tar.gz")
+source=("gset-${pkgver}.tar.gz::https://github.com/Crazygiscool/GSETLang/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 prepare() {
