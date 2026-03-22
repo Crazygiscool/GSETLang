@@ -6,7 +6,7 @@
 
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-yellow)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![AUR Package](https://img.shields.io/badge/AUR-gset--git-orange)](https://aur.archlinux.org/packages/gset-git/)
+[![Release](https://img.shields.io/github/v/release/Crazygiscool/GSETLang)](https://github.com/Crazygiscool/GSETLang/releases)
 
 </div>
 
@@ -14,69 +14,83 @@
 
 ## What is GSET?
 
-GSET is a transpiler that allows you to write code using any language's syntax (Python, JavaScript, Java, Go, etc.) and compile it to run on any target language's runtime.
+GSET v2.1.2 is a transpiler that allows you to write code using any language's syntax (Python, JavaScript, Java, Go, etc.) and compile it to run on any target language's runtime.
 
 **Write this:**
-```
+```gset
 print("Hello from Python syntax!")
+nums = [1, 2, 3]
+for i in nums {
+    print(i)
+}
 ```
 
 **Compile and run with:**
 - Python → `print("Hello from Python syntax!")`
-- JavaScript → `console.log("Hello from Python syntax!")`  
+- JavaScript → `console.log("Hello from Python syntax!")`
 - Java → `System.out.println("Hello from Python syntax!")`
 - Go → `fmt.Println("Hello from Python syntax!")`
 
 ---
 
-## Installation
+## Quick Install (One-Liner)
 
-### Linux (AUR - Recommended)
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash
+```
+
+That's it! The script auto-detects your OS and architecture.
+
+---
+
+## Installation Methods
+
+### 1. Quick Install (Recommended)
+```bash
+curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash
+```
+
+### 2. Manual Download
+```bash
+# Linux (amd64)
+wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-amd64.tar.gz
+tar -xzf gset-linux-amd64.tar.gz
+chmod +x gset
+mv gset ~/.local/bin/
+
+# macOS (Apple Silicon)
+wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-darwin-arm64.tar.gz
+tar -xzf gset-darwin-arm64.tar.gz
+chmod +x gset
+mv gset ~/.local/bin/
+
+# Windows (PowerShell)
+irm https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-windows-amd64.zip -OutFile gset.zip
+Expand-Archive gset.zip -DestinationPath .
+# Add to PATH manually
+```
+
+### 3. Arch Linux (AUR)
 ```bash
 yay -S gset-git
 # or
 paru -S gset-git
 ```
 
-### Linux (Direct)
-```bash
-wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-amd64
-chmod +x gset-linux-amd64
-sudo mv gset-linux-amd64 /usr/local/bin/gset
-```
-
-### macOS
-```bash
-# Using Homebrew (if available)
-brew install gset
-
-# Or download the app bundle
-wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/GSET-2.0.2-macOS.zip
-unzip GSET-2.0.2-macOS.zip
-# Drag GSET.app to /Applications
-```
-
-### Windows
-```bash
-# Using Chocolatey
-choco install gset
-
-# Or download installer
-wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-setup.exe
-# Run the installer
-```
-
-### Debian/Ubuntu
-```bash
-wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset_2.0.2_amd64.deb
-sudo dpkg -i gset_2.0.2_amd64.deb
-```
-
-### Build from Source
+### 4. Build from Source
 ```bash
 git clone https://github.com/Crazygiscool/GSETLang
 cd GSETLang
 go build -o gset .
+# or
+make build
+```
+
+### 5. Install with Make
+```bash
+make install  # Install to ~/.local/bin
+make uninstall  # Remove installation
 ```
 
 ---
@@ -85,12 +99,18 @@ go build -o gset .
 
 ### 1. Create a GSET file
 ```bash
-echo 'print("Hello, World!")' > hello.gset
+cat > hello.gset << 'EOF'
+function main() {
+    print("Hello, World!")
+}
+
+main()
+EOF
 ```
 
 ### 2. Run it
 ```bash
-gset hello.gset
+gset run hello.gset
 ```
 
 **Output:**
@@ -98,154 +118,158 @@ gset hello.gset
 Hello, World!
 ```
 
+### 3. Or just transpile to see the output
+```bash
+gset transpile hello.gset
+```
+
+**Output:**
+```go
+func main() {
+    fmt.Println("Hello, World!")
+}
+main()
+```
+
 ---
 
-## Language Syntax Support
+## Features
 
-GSET auto-detects the target language from file extension:
+### Variables & Types
+```gset
+x = 42
+name = "GSET"
+isActive = true
+price = 3.14
+nums = [1, 2, 3, 4, 5]
+```
+
+### Control Flow
+```gset
+if x > 10 {
+    print("big")
+} else if x > 5 {
+    print("medium")
+} else {
+    print("small")
+}
+```
+
+### Loops
+```gset
+# For loop
+for i in nums {
+    print(i)
+}
+
+# For-each with index
+for idx, val in nums {
+    print(idx)
+    print(val)
+}
+
+# While loop
+while count > 0 {
+    print(count)
+    count = count - 1
+}
+```
+
+### Functions
+```gset
+function greet(name) {
+    print("Hello, ")
+    print(name)
+}
+
+function factorial(n) {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+```
+
+### List Comprehensions
+```gset
+nums = [1, 2, 3, 4, 5]
+squared = [x * x for x in nums]
+evens = [x for x in nums if x % 2 == 0]
+```
+
+---
+
+## Language Targets
+
+GSET auto-detects target language from file extension:
 
 | Extension | Target Compiler | Example Output |
-|-----------|-----------------|-----------------|
+|-----------|-----------------|----------------|
 | `.py` | Python | `print("Hello")` |
 | `.js` | Node.js | `console.log("Hello")` |
 | `.go` | Go | `fmt.Println("Hello")` |
 | `.java` | Java | `System.out.println("Hello")` |
 | `.rb` | Ruby | `puts "Hello"` |
-| `.php` | PHP | `echo "Hello"` |
+| `.php` | PHP | `echo "Hello";` |
 | `.gset` | Go (default) | `fmt.Println("Hello")` |
-
-**Example - JavaScript syntax in a .js file:**
-```javascript
-console.log("Hello from JavaScript syntax!")
-```
-```bash
-$ gset hello.js
-Hello from JavaScript syntax!
-```
 
 ---
 
 ## Custom Keywords
 
-### Method 1: File Header
-Define keywords at the top of your file using `---` as separator:
-```
-shout=fmt.Println
+### Via File Header
+```gset
+say=fmt.Println
 ---
-shout("Hello with custom keyword!")
+say("Hello with custom keyword!")
 ```
 
-### Method 2: Global Config
-Edit `/etc/gset.conf` or create `gset.conf` in your project directory:
+### Via Configuration File
+Create `gset.conf` in your project directory:
 
 ```conf
 # Global keywords
 say=fmt.Println
 print=fmt.Print
 
-# Language-specific keywords
+# Language-specific
 ext.py.say=print
 ext.js.say=console.log
 ext.java.say=System.out.println
-
-# Compiler settings
-compiler.py.command=python3
-compiler.go.wrapper=package main\nfunc main() {\n##CODE##\n}
 ```
 
 ---
 
-## Configuration Options
+## Available Platforms
 
-### Keyword Mapping
-```conf
-# Map any keyword to any target
-myprint=fmt.Println
-custom=System.out.println
-echo=print
-```
-
-### Compiler Configuration
-```conf
-# Custom compiler for each extension
-compiler.py.command=python3
-compiler.py.args=
-compiler.py.wrapper=
-
-compiler.go.command=go
-compiler.go.args=run
-compiler.go.wrapper=package main\nfunc main() {\n##CODE##\n}
-```
-
-### Extension-Specific Keywords
-```conf
-ext.py.say=print
-ext.py.println=print
-ext.js.say=console.log
-ext.js.log=console.log
-ext.java.say=System.out.println
-ext.go.say=fmt.Println
-```
+| OS | Arch | Download |
+|----|-------|----------|
+| Linux | amd64 | [gset-linux-amd64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-amd64.tar.gz) |
+| Linux | arm64 | [gset-linux-arm64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-arm64.tar.gz) |
+| Linux | 386 | [gset-linux-386.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-386.tar.gz) |
+| macOS | amd64 | [gset-darwin-amd64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-darwin-amd64.tar.gz) |
+| macOS | arm64 | [gset-darwin-arm64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-darwin-arm64.tar.gz) |
+| Windows | amd64 | [gset-windows-amd64.zip](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-windows-amd64.zip) |
+| Windows | 386 | [gset-windows-386.zip](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-windows-386.zip) |
 
 ---
 
-## Project Structure
+## Development
 
-```
-GSETLang/
-├── ast/           # Abstract Syntax Tree definitions
-├── lexer/         # Tokenizer
-├── parser/        # Recursive descent parser
-├── transpiler/    # Code translation & execution
-├── config/        # Configuration loader
-├── packages/      # OS-specific packages
-│   ├── arch/      # Arch Linux PKGBUILD
-│   ├── aur/       # AUR package
-│   ├── debian/    # APT package files
-│   ├── windows/  # Inno Setup script
-│   └── macos/     # PKG builder
-├── scripts/       # Build & upload scripts
-├── gset.conf      # Default configuration
-├── LICENSE        # CC BY-NC 4.0
-└── RELEASE.md     # Release notes
-```
-
----
-
-## Usage Examples
-
-### Basic Function Call
 ```bash
-$ echo 'print("Hello GSET!")' > test.gset
-$ gset test.gset
-Hello GSET!
-```
+# Clone and build
+git clone https://github.com/Crazygiscool/GSETLang
+cd GSETLang
+make build
 
-### Using File Extension for Language Target
-```bash
-$ echo 'console.log("Running with Node!")' > test.js
-$ gset test.js
-Running with Node!
-```
+# Run tests
+make test-files
 
-### Custom Keywords
-```bash
-$ cat > mycode.gset << 'EOF'
-shout=fmt.Println
----
-shout("This uses shout instead of print!")
-EOF
-$ gset mycode.gset
-This uses shout instead of print!
-```
+# Cross-compile for all platforms
+make crossbuild
 
-### Multiple Statements
-```bash
-$ echo 'print("Line 1")
-print("Line 2")' > multi.gset
-$ gset multi.gset
-Line 1
-Line 2
+# Install locally
+make install
 ```
 
 ---
@@ -254,9 +278,9 @@ Line 2
 
 **CC BY-NC 4.0** - Creative Commons Attribution-NonCommercial 4.0
 
-- ✅ Use and remix freely
-- ✅ Attribution required
-- ❌ No commercial use
+- Use and remix freely
+- Attribution required
+- No commercial use
 
 See [LICENSE](LICENSE) for full text.
 
@@ -265,13 +289,14 @@ See [LICENSE](LICENSE) for full text.
 ## Links
 
 - [GitHub Repository](https://github.com/Crazygiscool/GSETLang)
-- [AUR Package](https://aur.archlinux.org/packages/gset-git/)
+- [Releases](https://github.com/Crazygiscool/GSETLang/releases)
+- [Documentation](https://gsetlang.vercel.app)
 - [Report Issues](https://github.com/Crazygiscool/GSETLang/issues)
 
 ---
 
 <div align="center">
 
-**Version:** 2.0.2 | **License:** CC BY-NC 4.0 | **Copyright:** 2024 GSET Team
+**Version:** 2.1.2 | **License:** CC BY-NC 4.0 | **Copyright:** 2024-2026 GSET Team
 
 </div>

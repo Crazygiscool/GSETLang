@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64, 386]
+        exclude:
+          - goos: darwin
+            goarch: 386
+          - goos: windows
+            goarch: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          OUTPUT_NAME="gset-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            OUTPUT_NAME="${OUTPUT_NAME}.exe"
+          fi
+          GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="-s -w" -o "$OUTPUT_NAME" .
+
+      - name: Create archive
+        env:
+          GOOS: ${{ matrix.goos }}
+        run: |
+          if [ "$GOOS" = "windows" ]; then
+            7z a "gset-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "gset-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
+          else
+            tar -czf "gset-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "gset-${{ matrix.goos }}-${{ matrix.goarch }}"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gset-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: gset-${{ matrix.goos }}-${{ matrix.goarch }}*
+          retention-days: 5
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          echo "Release files:"
+          ls -lh
+
+      - name: Generate Release Notes
+        id: notes
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          git fetch --tags
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          {
+            echo "# Changes since ${PREV_TAG:-initial release}"
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              git log $PREV_TAG..HEAD --pretty=format:"- %s" 2>/dev/null || echo "- Minor improvements"
+            else
+              git log --pretty=format:"- %s" -10
+            fi
+            echo ""
+            echo "## Installation"
+            echo ""
+            echo "### Quick Install (Linux/macOS)"
+            echo '```bash'
+            echo 'curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash'
+            echo '```'
+            echo ""
+            echo "### Manual Install"
+            echo "1. Download the appropriate archive for your platform"
+            echo "2. Extract the archive"
+            echo "3. Make executable: \`chmod +x gset\`"
+            echo "4. Add to PATH: \`mv gset ~/.local/bin/\`"
+          } > RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*
+          body_path: RELEASE_NOTES.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify
+        run: |
+          echo "Release created: ${{ github.ref_name }}"
+          echo "Link: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
