@@ -30,9 +30,16 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+
+# Vercel
 .vercel/
 
 # Build output
 dist/
+
+# Docs build artifacts
+docs/dist/
+docs/node_modules/
+docs/.astro/
