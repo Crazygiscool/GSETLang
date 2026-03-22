@@ -7,6 +7,8 @@
 *.dll
 *.so
 *.dylib
+gset
+gsetlang
 
 # Test binary, built with `go test -c`
 *.test
@@ -31,3 +33,6 @@ go.work.sum
 # .idea/
 # .vscode/
 .vercel/
+
+# Build output
+dist/
