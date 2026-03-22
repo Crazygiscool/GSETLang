@@ -12,6 +12,8 @@ import (
 	"gsetlang/transpiler"
 )
 
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		printHelp()
@@ -40,7 +42,7 @@ func main() {
 		}
 		transpileFile(os.Args[2], cfg)
 	case "version":
-		fmt.Println("GSET v2.1.2")
+		fmt.Println("GSET v" + version)
 	case "help":
 		printHelp()
 	default:
