@@ -108,7 +108,7 @@ func transpileFile(filename string, cfg config.GSETConfig) {
 }
 
 func printHelp() {
-	fmt.Println(`GSET - Generic Syntax Extension Tool v2.1.2
+	fmt.Println("GSET - Generic Syntax Extension Tool v" + version + `
 
 Usage:
   gset run <file>        Transpile and execute a file
