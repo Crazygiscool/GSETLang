@@ -6,142 +6,122 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gsetlang/ast"
 	"gsetlang/config"
 	"gsetlang/lexer"
 	"gsetlang/parser"
 	"gsetlang/transpiler"
 )
 
-const Version = "2.0.2"
-
 func main() {
 	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
+		printHelp()
+		return
 	}
+
+	cfg := config.LoadConfig("")
 
 	cmd := os.Args[1]
 
 	switch cmd {
-	case "-v", "--version", "version", "v":
-		fmt.Println("GSET version", Version)
-	case "-h", "--help", "help":
-		printUsage()
-	case "-i", "--install":
-		install()
+	case "run":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: gset run <file>")
+			return
+		}
+		runFile(os.Args[2], cfg)
+	case "transpile":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: gset transpile <file>")
+			return
+		}
+		transpileFile(os.Args[2], cfg)
+	case "version":
+		fmt.Println("GSET v2.0.2")
+	case "help":
+		printHelp()
 	default:
-		runFile(cmd)
+		if _, err := os.Stat(cmd); err == nil {
+			runFile(cmd, cfg)
+		} else {
+			fmt.Printf("Unknown command: %s\n", cmd)
+			printHelp()
+		}
 	}
 }
 
-func printUsage() {
-	fmt.Println("GSET - Generic Syntax Extension Tool")
-	fmt.Println("Version:", Version)
-	fmt.Println("")
-	fmt.Println("Usage:")
-	fmt.Println("  gset <file>          Run a GSET file")
-	fmt.Println("  gset version        Show version")
-	fmt.Println("  gset install        Install GSET to system")
-	fmt.Println("  gset help           Show this help")
-}
-
-func install() {
-	// Basic install - copy binary to /usr/local/bin
-	exePath, _ := os.Executable()
-	dest := "/usr/local/bin/gset"
-
-	fmt.Printf("Installing GSET %s to %s...\n", Version, dest)
-	fmt.Println("Note: This requires sudo/root privileges")
-
-	// Try to copy (will fail without sudo - that's OK for now)
-	fmt.Println("To install manually: sudo cp", exePath, dest)
-}
-
-func runFile(filePath string) {
-	ext := strings.TrimPrefix(filepath.Ext(filePath), ".")
-	filename := strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath))
-
-	// Default to Go if no extension or unknown extension
-	if ext == "" || ext == "gset" {
-		ext = "go"
-	}
-
-	content, err := os.ReadFile(filePath)
+func runFile(filename string, cfg config.GSETConfig) {
+	content, err := os.ReadFile(filename)
 	if err != nil {
-		fmt.Println("Error reading file:", err)
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
 		os.Exit(1)
 	}
 
-	fileKeywords, body := parseGSetFile(string(content))
+	ext := strings.TrimPrefix(filepath.Ext(filename), ".")
+	if ext == filename {
+		ext = "py"
+	}
 
-	globalConfig := config.LoadConfig(filePath)
-	mergedKeywords := globalConfig.GetKeywords(fileKeywords, ext)
-
-	l := lexer.New(body)
+	l := lexer.New(string(content))
 	p := parser.New(l)
+	prog := p.ParseProgram()
 
-	program := p.ParseProgram()
-
-	if p.Errors() != nil {
-		fmt.Println("Parser errors:", p.Errors())
-	}
-
-	fmt.Println("--- AST ---")
-	fmt.Printf("Statements: %d\n", len(program.Statements))
-	fmt.Println(programToString(program))
-
-	fmt.Println("--- TRANSLATED ---")
-	t := transpiler.New(mergedKeywords)
-	translated := t.Translate(program)
-	fmt.Println(translated)
-
-	exec := transpiler.NewExecutor(mergedKeywords, convertCompilers(globalConfig.Compilers))
-	exec.Execute(translated, ext, filename)
-}
-
-func convertCompilers(src map[string]config.CompilerConfig) map[string]transpiler.CompilerConfig {
-	dst := make(map[string]transpiler.CompilerConfig)
-	for k, v := range src {
-		dst[k] = transpiler.CompilerConfig{
-			Command: v.Command,
-			Args:    v.Args,
-			Wrapper: v.Wrapper,
-			Run:     v.Run,
+	if len(p.Errors()) > 0 {
+		fmt.Fprintf(os.Stderr, "Parse errors:\n")
+		for _, e := range p.Errors() {
+			fmt.Fprintf(os.Stderr, "  %s\n", e)
 		}
+		os.Exit(1)
 	}
-	return dst
+
+	exec := transpiler.NewExecutor(nil)
+	exec.Execute(prog, ext, filename)
 }
 
-func parseGSetFile(src string) (map[string]string, string) {
-	keywords := make(map[string]string)
-
-	parts := strings.SplitN(src, "---", 2)
-	if len(parts) < 2 {
-		return keywords, src
+func transpileFile(filename string, cfg config.GSETConfig) {
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		os.Exit(1)
 	}
 
-	header := parts[0]
-	lines := strings.Split(header, "\n")
+	l := lexer.New(string(content))
+	p := parser.New(l)
+	prog := p.ParseProgram()
 
-	for _, line := range lines {
-		pair := strings.SplitN(line, "=", 2)
-		if len(pair) == 2 {
-			key := strings.TrimSpace(pair[0])
-			val := strings.TrimSpace(pair[1])
-			if key != "" {
-				keywords[key] = val
-			}
+	if len(p.Errors()) > 0 {
+		fmt.Fprintf(os.Stderr, "Parse errors:\n")
+		for _, e := range p.Errors() {
+			fmt.Fprintf(os.Stderr, "  %s\n", e)
 		}
+		os.Exit(1)
 	}
 
-	return keywords, parts[1]
+	t := transpiler.New(cfg.GlobalKeywords)
+	output := t.Translate(prog)
+	fmt.Println(output)
 }
 
-func programToString(program *ast.Program) string {
-	var out string
-	for _, stmt := range program.Statements {
-		out += stmt.String() + "\n"
-	}
-	return out
+func printHelp() {
+	fmt.Println(`GSET - Generic Syntax Extension Tool v2.0.2
+
+Usage:
+  gset run <file>        Transpile and execute a file
+  gset transpile <file>  Transpile and print output
+  gset version           Show version
+  gset help              Show this help
+
+Supported features:
+  - Variables: var, val, let, const
+  - Functions: fn, func, def, async fn, lambda
+  - Control Flow: if, elif, else, match, switch
+  - Loops: for, foreach, while, do-while
+  - Error Handling: try, catch, throw, finally
+  - Classes: class, extends, implements, constructors
+  - Async: async, await, yield
+  - Type Annotations
+  - List Comprehensions: [x for x in items if x > 0]
+  - Pattern Matching: match, case, guard
+  - Null Safety: ??, ?., optional chaining
+  - Operators: &&, ||, ??, **, //, ===, !==
+`)
 }
