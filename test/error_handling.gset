@@ -1,0 +1,17 @@
+# GSET Test Suite - Error Handling
+
+function divide(a, b) {
+    if b == 0 {
+        print("Error: Division by zero!")
+        return 0
+    }
+    return a
+}
+
+result = divide(10, 2)
+print(result)
+
+result = divide(10, 0)
+print(result)
+
+print("After error handling")

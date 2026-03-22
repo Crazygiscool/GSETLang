@@ -1,0 +1,35 @@
+# GSET Test Suite - If-Else Statements
+
+x = 10
+
+if x > 5 {
+    print("x is greater than 5")
+} else {
+    print("x is not greater than 5")
+}
+
+y = 3
+
+if y > 10 {
+    print("y is large")
+} else if y > 5 {
+    print("y is medium")
+} else if y > 0 {
+    print("y is small")
+} else {
+    print("y is not positive")
+}
+
+score = 85
+
+if score >= 90 {
+    print("Grade: A")
+} else if score >= 80 {
+    print("Grade: B")
+} else if score >= 70 {
+    print("Grade: C")
+} else if score >= 60 {
+    print("Grade: D")
+} else {
+    print("Grade: F")
+}

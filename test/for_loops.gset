@@ -1,0 +1,20 @@
+# GSET Test Suite - For Loops
+
+nums = [1, 2, 3, 4, 5]
+
+print("Iterating with for-in:")
+for i in nums {
+    print(i)
+}
+
+print("Iterating with index:")
+for idx, v in nums {
+    print(idx)
+    print(v)
+}
+
+sum = 0
+for n in nums {
+    sum = sum + n
+}
+print(sum)

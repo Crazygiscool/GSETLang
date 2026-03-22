@@ -121,7 +121,8 @@ func (l *Lexer) NextToken() ast.Token {
 		if l.peekChar() == '{' {
 			tok = ast.Token{Type: "HASH_BRACE", Literal: "#{", Line: l.line, Column: l.column}
 		} else {
-			tok = ast.Token{Type: "HASH", Literal: "#", Line: l.line, Column: l.column}
+			l.readComment()
+			return l.NextToken()
 		}
 	case '`':
 		tok.Type = "TEMPLATE_STRING"
@@ -332,7 +333,7 @@ func (l *Lexer) NextToken() ast.Token {
 }
 
 func (l *Lexer) skipWhitespaceAndComments() {
-	for l.ch == ' ' || l.ch == '\t' || l.ch == ',' {
+	for l.ch == ' ' || l.ch == '\t' {
 		l.readChar()
 	}
 }

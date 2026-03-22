@@ -1,0 +1,46 @@
+# GSET Comprehensive Test Suite
+# Tests all major language features
+
+print("=== Starting GSET Comprehensive Test ===")
+
+# Variables
+x = 42
+name = "GSET"
+nums = [1, 2, 3, 4, 5]
+
+print("Variables initialized:")
+print(x)
+print(name)
+print(nums)
+
+# For loop
+print("For loop:")
+for i in nums {
+    print(i)
+}
+
+# While loop
+print("While loop:")
+count = 3
+while count > 0 {
+    print(count)
+    count = count - 1
+}
+
+# If-else
+print("If-else:")
+if x > 40 {
+    print("x is greater than 40")
+} else {
+    print("x is not greater than 40")
+}
+
+# Functions
+print("Functions:")
+function square(n) {
+    return n * n
+}
+
+print(square(5))
+
+print("=== GSET Comprehensive Test Complete ===")

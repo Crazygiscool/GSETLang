@@ -327,9 +327,6 @@ func (t *Transpiler) translateCallExpression(ce *ast.CallExpression) string {
 	fn := ""
 	if ident, ok := ce.Function.(*ast.Identifier); ok {
 		fn = ident.Value
-		if mapping, ok := t.cfg[fn]; ok {
-			fn = mapping
-		}
 	}
 	var args []string
 	for _, arg := range ce.Arguments {

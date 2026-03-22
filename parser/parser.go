@@ -36,8 +36,13 @@ func (p *Parser) peekError(t string) {
 
 func (p *Parser) ParseProgram() *ast.Program {
 	for p.curTok.Type != "EOF" {
-		if p.curTok.Type == "RBRACE" || p.curTok.Type == "NEWLINE" {
+		for p.curTok.Type == "NEWLINE" || p.curTok.Type == "SEMICOLON" {
 			p.nextToken()
+		}
+		if p.curTok.Type == "RBRACE" || p.curTok.Type == "EOF" {
+			if p.curTok.Type == "RBRACE" {
+				p.nextToken()
+			}
 			continue
 		}
 		if p.curTok.Type == "IMPORT" {
@@ -61,7 +66,7 @@ func (p *Parser) ParseProgram() *ast.Program {
 }
 
 func (p *Parser) parseStatement() ast.Statement {
-	if p.curTok.Type == "RBRACE" || p.curTok.Type == "EOF" || p.curTok.Type == "NEWLINE" {
+	if p.curTok.Type == "RBRACE" || p.curTok.Type == "EOF" {
 		return nil
 	}
 	switch p.curTok.Type {
@@ -238,11 +243,10 @@ func (p *Parser) parseIfStatement() ast.Statement {
 	condition := p.parseExpression()
 	consequence := p.parseBlock()
 
-	if p.curTok.Type == "RBRACE" {
+	for p.curTok.Type == "NEWLINE" {
 		p.nextToken()
 	}
-
-	for p.curTok.Type == "NEWLINE" || p.curTok.Type == "RBRACE" {
+	if p.curTok.Type == "RBRACE" {
 		p.nextToken()
 	}
 
@@ -253,9 +257,6 @@ func (p *Parser) parseIfStatement() ast.Statement {
 			alternative = p.parseIfStatement()
 		} else {
 			alternative = p.parseBlock()
-			if p.curTok.Type == "RBRACE" {
-				p.nextToken()
-			}
 		}
 	}
 
@@ -309,7 +310,7 @@ func (p *Parser) parseForStatement() ast.Statement {
 	tok := p.curTok
 	p.nextToken()
 
-	if p.curTok.Type == "LPAREN" || p.peekTok.Type == "IN" {
+	if p.curTok.Type == "LPAREN" || p.peekTok.Type == "IN" || p.peekTok.Type == "COMMA" {
 		return p.parseForInStatement(tok)
 	}
 
@@ -350,7 +351,7 @@ func (p *Parser) parseForInStatement(tok ast.Token) ast.Statement {
 	}
 
 	if index != nil {
-		return &ast.ForEachStatement{Token: tok, Key: index, Value: item, Object: iterable, Body: body}
+		return &ast.ForEachStatement{Token: tok, Key: item, Value: index, Object: iterable, Body: body}
 	}
 	return &ast.ForStatement{Token: tok, Item: item, Iterable: iterable, Body: body}
 }
@@ -669,15 +670,24 @@ func (p *Parser) parseBlock() *ast.BlockStatement {
 	block := &ast.BlockStatement{Token: p.curTok, Statements: []ast.Statement{}}
 
 	for {
+		for p.curTok.Type == "NEWLINE" || p.curTok.Type == "SEMICOLON" {
+			p.nextToken()
+		}
 		if p.curTok.Type == "RBRACE" || p.curTok.Type == "EOF" {
 			break
 		}
 		if stmt := p.parseStatement(); stmt != nil {
 			block.Statements = append(block.Statements, stmt)
 		}
+		for p.curTok.Type == "NEWLINE" || p.curTok.Type == "SEMICOLON" {
+			p.nextToken()
+		}
 		if p.curTok.Type == "RBRACE" || p.curTok.Type == "EOF" {
 			break
 		}
+	}
+
+	if p.curTok.Type == "RBRACE" {
 		p.nextToken()
 	}
 

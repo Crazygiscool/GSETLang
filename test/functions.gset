@@ -1,0 +1,23 @@
+# GSET Test Suite - Functions
+
+function greet(name) {
+    print("Hello, ")
+    print(name)
+    print("!")
+}
+
+function add(a, b) {
+    result = a + b
+    print(result)
+}
+
+function factorial(n) {
+    if n <= 1 {
+        return 1
+    }
+    return n
+}
+
+greet("GSET")
+add(5, 3)
+print(factorial(5))
