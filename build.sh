@@ -8,6 +8,7 @@ set -e
 VERSION=$(grep 'GSET v' main.go | head -1 | sed 's/.*GSET v//' | sed 's/".*//')
 REPO="github.com/Crazygiscool/GSETLang"
 DIR="dist"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Building GSET v${VERSION}..."
 
@@ -62,7 +63,41 @@ tar -czf "gset-darwin-arm64.tar.gz" "gset-darwin-arm64"
 zip "gset-windows-amd64.zip" "gset-windows-amd64.exe"
 zip "gset-windows-386.zip" "gset-windows-386.exe"
 
-# Create checksums
+# Create NSIS installer (if makensis is available)
+if command -v makensis &> /dev/null; then
+    echo ""
+    echo "Creating NSIS installer..."
+    cd "$SCRIPT_DIR"
+    cp dist/gset-windows-amd64.exe dist/gset-windows-amd64/gset.exe
+    cd dist/gset-windows-amd64
+    cp "$SCRIPT_DIR/LICENSE" .
+    cp "$SCRIPT_DIR/installer.nsi" .
+    makensis installer.nsi
+    mv gset-setup.exe ..
+    rm gset.exe LICENSE installer.nsi
+    cd "$SCRIPT_DIR"
+    echo "  -> gset-setup.exe"
+elif [ -f /usr/bin/makensis ] || [ -f /usr/local/bin/makensis ]; then
+    echo ""
+    echo "Creating NSIS installer..."
+    cd "$SCRIPT_DIR"
+    cp dist/gset-windows-amd64.exe dist/gset-windows-amd64/gset.exe
+    cd dist/gset-windows-amd64
+    cp "$SCRIPT_DIR/LICENSE" .
+    cp "$SCRIPT_DIR/installer.nsi" .
+    /usr/bin/makensis installer.nsi 2>/dev/null || /usr/local/bin/makensis installer.nsi
+    mv gset-setup.exe ..
+    rm gset.exe LICENSE installer.nsi
+    cd "$SCRIPT_DIR"
+    echo "  -> gset-setup.exe"
+else
+    echo ""
+    echo "NSIS not found - skipping installer creation"
+    echo "Install NSIS to create Windows installer: brew install nsis (macOS) or apt install nsis (Linux)"
+fi
+
+# Go back to dist and create checksums
+cd "$DIR"
 sha256sum * > SHA256SUMS
 
 echo ""

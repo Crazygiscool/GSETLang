@@ -12,12 +12,15 @@ License: CC BY-NC 4.0
 LicenseUrl: https://github.com/Crazygiscool/GSETLang/blob/main/LICENSE
 ShortDescription: Universal language transpiler
 Installer:
-  InstallerUrl: https://github.com/Crazygiscool/GSETLang/releases/download/v2.1.2/install.ps1
-  InstallerType: powershell
+  InstallerUrl: https://github.com/Crazygiscool/GSETLang/releases/download/v2.1.2/gset-setup.exe
+  InstallerType: nsis
   InstallModes:
     - Interactive
     - Silent
     - SilentWithProgress
+  Switches:
+    Silent: /S
+    SilentWithProgress: /S
 Commands:
   - gset
 PackageSearchKeywords:

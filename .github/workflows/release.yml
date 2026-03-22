@@ -62,8 +62,46 @@ jobs:
           path: gset-${{ matrix.goos }}-${{ matrix.goarch }}*
           retention-days: 5
 
-  release:
+  installer:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install NSIS
+        run: sudo apt-get update && sudo apt-get install -y nsis
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: gset-windows-amd64
+          path: dist
+
+      - name: Prepare installer files
+        run: |
+          mkdir -p installer_temp
+          cp dist/gset-windows-amd64.exe installer_temp/gset.exe
+          cp LICENSE installer_temp/
+          cp installer.nsi installer_temp/
+
+      - name: Build NSIS installer
+        run: |
+          cd installer_temp
+          makensis installer.nsi
+          mv gset-setup.exe ../dist/
+          cd ..
+          rm -rf installer_temp
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: gset-installer
+          path: dist/gset-setup.exe
+          retention-days: 5
+
+  release:
+    needs: [build, installer]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -93,9 +131,9 @@ jobs:
             echo "# Changes since ${PREV_TAG:-initial release}"
             echo ""
             if [ -n "$PREV_TAG" ]; then
-              git log $PREV_TAG..HEAD --pretty=format:"- %s" 2>/dev/null || echo "- Minor improvements"
+              git log $PREV_TAG..HEAD --pretty=format="- %s" 2>/dev/null || echo "- Minor improvements"
             else
-              git log --pretty=format:"- %s" -10
+              git log --pretty=format="- %s" -10
             fi
             echo ""
             echo "## Installation"
@@ -105,23 +143,17 @@ jobs:
             echo 'curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash'
             echo '```'"
             echo ""
-            echo "### Windows (PowerShell)"
-            echo '```powershell'
-            echo 'irm https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.ps1 | iex'
-            echo '```'"
-            echo ""
             echo "### Windows (Winget)"
             echo '```powershell'
             echo 'winget install GSETLang.GSET'
             echo '```'"
             echo ""
+            echo "### Windows (Manual Install)"
+            echo "Download and run [gset-setup.exe](https://github.com/Crazygiscool/GSETLang/releases/download/${VERSION}/gset-setup.exe)"
+            echo ""
             echo "### Manual Install"
             echo "See all platforms and download links on the [release page](https://github.com/Crazygiscool/GSETLang/releases)"
           } > RELEASE_NOTES.md
-
-      - name: Upload PowerShell installer
-        run: |
-          cp install.ps1 dist/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
