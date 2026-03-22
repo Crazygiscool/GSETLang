@@ -36,7 +36,7 @@ func main() {
 		}
 		transpileFile(os.Args[2], cfg)
 	case "version":
-		fmt.Println("GSET v2.0.2")
+		fmt.Println("GSET v2.1.2")
 	case "help":
 		printHelp()
 	default:
@@ -102,7 +102,7 @@ func transpileFile(filename string, cfg config.GSETConfig) {
 }
 
 func printHelp() {
-	fmt.Println(`GSET - Generic Syntax Extension Tool v2.0.2
+	fmt.Println(`GSET - Generic Syntax Extension Tool v2.1.2
 
 Usage:
   gset run <file>        Transpile and execute a file
