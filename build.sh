@@ -5,7 +5,7 @@
 
 set -e
 
-VERSION=$(grep 'GSET v' main.go | head -1 | sed 's/.*GSET v//' | sed 's/".*//')
+VERSION=$(grep 'VERSION := ' Makefile | sed 's/.*VERSION := *//')
 REPO="github.com/Crazygiscool/GSETLang"
 DIR="dist"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,14 +30,14 @@ PLATFORMS=(
 for PLATFORM in "${PLATFORMS[@]}"; do
     GOOS=${PLATFORM%/*}
     GOARCH=${PLATFORM#*/}
-    OUTPUT="$DIR/gset-${GOOS}-${GOARCH}"
+    OUTPUT="$DIR/gset-${VERSION}-${GOOS}-${GOARCH}"
     
     if [ "$GOOS" = "windows" ]; then
         OUTPUT="${OUTPUT}.exe"
     fi
     
     echo "Building $GOOS/$GOARCH..."
-    GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="-s -w" -o "$OUTPUT" .
+    GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="-s -w -X main.version=${VERSION}" -o "$OUTPUT" .
     
     # Get file size
     SIZE=$(du -h "$OUTPUT" | cut -f1)
@@ -51,17 +51,17 @@ echo "Creating archives..."
 cd $DIR
 
 # Linux archives
-tar -czf "gset-linux-amd64.tar.gz" "gset-linux-amd64"
-tar -czf "gset-linux-arm64.tar.gz" "gset-linux-arm64"
-tar -czf "gset-linux-386.tar.gz" "gset-linux-386"
+tar -czf "gset-${VERSION}-linux-amd64.tar.gz" "gset-${VERSION}-linux-amd64"
+tar -czf "gset-${VERSION}-linux-arm64.tar.gz" "gset-${VERSION}-linux-arm64"
+tar -czf "gset-${VERSION}-linux-386.tar.gz" "gset-${VERSION}-linux-386"
 
 # macOS archives
-tar -czf "gset-darwin-amd64.tar.gz" "gset-darwin-amd64"
-tar -czf "gset-darwin-arm64.tar.gz" "gset-darwin-arm64"
+tar -czf "gset-${VERSION}-darwin-amd64.tar.gz" "gset-${VERSION}-darwin-amd64"
+tar -czf "gset-${VERSION}-darwin-arm64.tar.gz" "gset-${VERSION}-darwin-arm64"
 
 # Windows archives (zip)
-zip "gset-windows-amd64.zip" "gset-windows-amd64.exe"
-zip "gset-windows-386.zip" "gset-windows-386.exe"
+zip "gset-${VERSION}-windows-amd64.zip" "gset-${VERSION}-windows-amd64.exe"
+zip "gset-${VERSION}-windows-386.zip" "gset-${VERSION}-windows-386.exe"
 
 # Create NSIS installer (if makensis is available)
 if command -v makensis &> /dev/null || [ -f /usr/bin/makensis ] || [ -f /usr/local/bin/makensis ]; then
@@ -69,16 +69,16 @@ if command -v makensis &> /dev/null || [ -f /usr/bin/makensis ] || [ -f /usr/loc
     echo "Creating NSIS installer..."
     cd "$SCRIPT_DIR"
     mkdir -p nsis_temp
-    cp dist/gset-windows-amd64.exe nsis_temp/gset.exe
+    cp dist/gset-${VERSION}-windows-amd64.exe nsis_temp/gset.exe
     cp LICENSE nsis_temp/
     cp installer.nsi nsis_temp/
     cd nsis_temp
     MAKENSIS_PATH=$(command -v makensis 2>/dev/null || echo "/usr/bin/makensis")
     $MAKENSIS_PATH installer.nsi
     cd "$SCRIPT_DIR"
-    mv nsis_temp/gset-setup.exe dist/
+    mv nsis_temp/gset-setup.exe dist/gset-${VERSION}-setup.exe
     rm -rf nsis_temp
-    echo "  -> gset-setup.exe"
+    echo "  -> gset-${VERSION}-setup.exe"
 else
     echo ""
     echo "NSIS not found - skipping installer creation"

@@ -10,16 +10,16 @@ all: build
 # Build for current platform
 build:
 	@echo "Building GSET v$(VERSION)..."
-	go build -ldflags="-s -w -X main.version=$(VERSION)" -o gset .
-	@echo "Built: ./gset"
-	cp gset test/gset
+	go build -ldflags="-s -w -X main.version=$(VERSION)" -o gset-$(VERSION) .
+	@echo "Built: ./gset-$(VERSION)"
+	cp gset-$(VERSION) test/gset
 	@echo "Copied to test/gset"
 
 # Build with debug info
 debug:
-	go build -o gset .
-	@echo "Built: ./gset (debug)"
-	cp gset test/gset
+	go build -ldflags="-X main.version=$(VERSION)" -o gset-$(VERSION)-debug .
+	@echo "Built: ./gset-$(VERSION)-debug (debug)"
+	cp gset-$(VERSION)-debug test/gset
 	@echo "Copied to test/gset"
 
 # Run tests
@@ -28,21 +28,18 @@ test:
 
 # Run test files
 test-files:
-	@./gset transpile test/comprehensive.gset
+	@./test/gset transpile test/comprehensive.gset
 
 # Clean build artifacts
 clean:
 	rm -rf dist/
-	rm -f gset
-	rm -f gset.exe
+	rm -f gset-*
 	rm -f test/gset
 
 # Cross-compile for all platforms
 crossbuild:
 	@chmod +x build.sh
 	@./build.sh
-	cp gset test/gset
-	@echo "Copied to test/gset"
 
 # Create release (requires GitHub CLI)
 release: crossbuild
