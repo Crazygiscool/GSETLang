@@ -19,10 +19,12 @@ GSET will:
 
 Create `hello.gset`:
 
-```
-main() {
+```gset
+function main() {
     print("Hello, World!")
 }
+
+main()
 ```
 
 Run it:
@@ -34,51 +36,113 @@ Hello, World!
 
 ## Example: Variables and Arithmetic
 
-```
-main() {
+```gset
+function main() {
     x = 10
     y = 20
     result = x + y
     print(result)
 }
+
+main()
+```
+
+## Example: Arrays and For Loops
+
+```gset
+function main() {
+    nums = [1, 2, 3, 4, 5]
+    
+    for i in nums {
+        print(i)
+    }
+    
+    sum = 0
+    for n in nums {
+        sum = sum + n
+    }
+    print(sum)
+}
+
+main()
+```
+
+## Example: While Loops
+
+```gset
+function main() {
+    count = 5
+    while count > 0 {
+        print(count)
+        count = count - 1
+    }
+    print("Blastoff!")
+}
+
+main()
 ```
 
 ## Example: Conditionals
 
-```
-main() {
-    age = 25
-    if age >= 18 {
-        print("Adult")
+```gset
+function main() {
+    score = 85
+    
+    if score >= 90 {
+        print("Grade: A")
+    } else if score >= 80 {
+        print("Grade: B")
+    } else if score >= 70 {
+        print("Grade: C")
     } else {
-        print("Minor")
+        print("Grade: F")
     }
 }
-```
 
-## Example: Loops
-
-```
-main() {
-    i = 0
-    while i < 5 {
-        print(i)
-        i = i + 1
-    }
-}
+main()
 ```
 
 ## Example: Functions
 
-```
-main() {
-    result = add(5, 3)
-    print(result)
+```gset
+function greet(name) {
+    print("Hello, ")
+    print(name)
 }
 
-add(a, b) {
+function add(a, b) {
     return a + b
 }
+
+function factorial(n) {
+    if n <= 1 {
+        return 1
+    }
+    return n
+}
+
+function main() {
+    greet("GSET")
+    print(add(5, 3))
+    print(factorial(5))
+}
+
+main()
+```
+
+## Example: List Comprehensions
+
+```gset
+function main() {
+    nums = [1, 2, 3, 4, 5]
+    squared = [x * x for x in nums]
+    print(squared)
+    
+    evens = [x for x in nums if x % 2 == 0]
+    print(evens)
+}
+
+main()
 ```
 
 ## Output Formats
@@ -92,6 +156,9 @@ gset run file.gset
 # Show transpiled output only
 gset transpile file.gset
 
-# Save output to file
-gset transpile file.gset -o output.py
+# Show version
+gset version
+
+# Show help
+gset help
 ```
