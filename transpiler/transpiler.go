@@ -403,7 +403,7 @@ func GetCompilers() map[string]CompilerConfig {
 	}
 }
 
-func (e *Executor) Execute(program *ast.Program, ext, filename string) {
+func (e *Executor) Execute(program *ast.Program, ext, filename string, keep bool) {
 	t := New(nil)
 	code := t.Translate(program)
 
@@ -464,7 +464,10 @@ func (e *Executor) Execute(program *ast.Program, ext, filename string) {
 	fmt.Println("--- RUNNING GSET OUTPUT ---")
 	cmd.Run()
 
-	if ext == "java" {
-		os.Remove("Main.class")
+	if !keep {
+		os.Remove(tmpFile)
+		if ext == "java" {
+			os.Remove("Main.class")
+		}
 	}
 }

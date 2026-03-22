@@ -25,10 +25,14 @@ func main() {
 	switch cmd {
 	case "run":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: gset run <file>")
+			fmt.Println("Usage: gset run <file> [--keep]")
 			return
 		}
-		runFile(os.Args[2], cfg)
+		keep := false
+		if len(os.Args) > 3 && os.Args[3] == "--keep" {
+			keep = true
+		}
+		runFile(os.Args[2], cfg, keep)
 	case "transpile":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: gset transpile <file>")
@@ -41,7 +45,7 @@ func main() {
 		printHelp()
 	default:
 		if _, err := os.Stat(cmd); err == nil {
-			runFile(cmd, cfg)
+			runFile(cmd, cfg, false)
 		} else {
 			fmt.Printf("Unknown command: %s\n", cmd)
 			printHelp()
@@ -49,7 +53,7 @@ func main() {
 	}
 }
 
-func runFile(filename string, cfg config.GSETConfig) {
+func runFile(filename string, cfg config.GSETConfig, keep bool) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
@@ -74,7 +78,7 @@ func runFile(filename string, cfg config.GSETConfig) {
 	}
 
 	exec := transpiler.NewExecutor(nil)
-	exec.Execute(prog, ext, filename)
+	exec.Execute(prog, ext, filename, keep)
 }
 
 func transpileFile(filename string, cfg config.GSETConfig) {
@@ -106,6 +110,7 @@ func printHelp() {
 
 Usage:
   gset run <file>        Transpile and execute a file
+  gset run <file> --keep Keep the execution file after running
   gset transpile <file>  Transpile and print output
   gset version           Show version
   gset help              Show this help
