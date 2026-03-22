@@ -42,7 +42,7 @@ Section "Install"
     SetOutPath "$INSTDIR"
     
     ; Install files
-    File "dist\gset-windows-amd64\gset.exe"
+    File "gset.exe"
     
     ; Create uninstaller
     WriteUninstaller "$INSTDIR\Uninstall.exe"

@@ -64,31 +64,20 @@ zip "gset-windows-amd64.zip" "gset-windows-amd64.exe"
 zip "gset-windows-386.zip" "gset-windows-386.exe"
 
 # Create NSIS installer (if makensis is available)
-if command -v makensis &> /dev/null; then
+if command -v makensis &> /dev/null || [ -f /usr/bin/makensis ] || [ -f /usr/local/bin/makensis ]; then
     echo ""
     echo "Creating NSIS installer..."
     cd "$SCRIPT_DIR"
-    cp dist/gset-windows-amd64.exe dist/gset-windows-amd64/gset.exe
-    cd dist/gset-windows-amd64
-    cp "$SCRIPT_DIR/LICENSE" .
-    cp "$SCRIPT_DIR/installer.nsi" .
-    makensis installer.nsi
-    mv gset-setup.exe ..
-    rm gset.exe LICENSE installer.nsi
+    mkdir -p nsis_temp
+    cp dist/gset-windows-amd64.exe nsis_temp/gset.exe
+    cp LICENSE nsis_temp/
+    cp installer.nsi nsis_temp/
+    cd nsis_temp
+    MAKENSIS_PATH=$(command -v makensis 2>/dev/null || echo "/usr/bin/makensis")
+    $MAKENSIS_PATH installer.nsi
     cd "$SCRIPT_DIR"
-    echo "  -> gset-setup.exe"
-elif [ -f /usr/bin/makensis ] || [ -f /usr/local/bin/makensis ]; then
-    echo ""
-    echo "Creating NSIS installer..."
-    cd "$SCRIPT_DIR"
-    cp dist/gset-windows-amd64.exe dist/gset-windows-amd64/gset.exe
-    cd dist/gset-windows-amd64
-    cp "$SCRIPT_DIR/LICENSE" .
-    cp "$SCRIPT_DIR/installer.nsi" .
-    /usr/bin/makensis installer.nsi 2>/dev/null || /usr/local/bin/makensis installer.nsi
-    mv gset-setup.exe ..
-    rm gset.exe LICENSE installer.nsi
-    cd "$SCRIPT_DIR"
+    mv nsis_temp/gset-setup.exe dist/
+    rm -rf nsis_temp
     echo "  -> gset-setup.exe"
 else
     echo ""
