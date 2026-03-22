@@ -12,11 +12,15 @@ build:
 	@echo "Building GSET v$(VERSION)..."
 	go build -ldflags="-s -w -X main.version=$(VERSION)" -o gset .
 	@echo "Built: ./gset"
+	cp gset test/gset
+	@echo "Copied to test/gset"
 
 # Build with debug info
 debug:
 	go build -o gset .
 	@echo "Built: ./gset (debug)"
+	cp gset test/gset
+	@echo "Copied to test/gset"
 
 # Run tests
 test:
@@ -31,11 +35,14 @@ clean:
 	rm -rf dist/
 	rm -f gset
 	rm -f gset.exe
+	rm -f test/gset
 
 # Cross-compile for all platforms
 crossbuild:
 	@chmod +x build.sh
 	@./build.sh
+	cp gset test/gset
+	@echo "Copied to test/gset"
 
 # Create release (requires GitHub CLI)
 release: crossbuild
