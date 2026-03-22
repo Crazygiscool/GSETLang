@@ -100,17 +100,28 @@ jobs:
             echo ""
             echo "## Installation"
             echo ""
-            echo "### Quick Install (Linux/macOS)"
+            echo "### Linux / macOS / Windows (Git Bash)"
             echo '```bash'
             echo 'curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash'
-            echo '```'
+            echo '```'"
+            echo ""
+            echo "### Windows (PowerShell)"
+            echo '```powershell'
+            echo 'irm https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.ps1 | iex'
+            echo '```'"
+            echo ""
+            echo "### Windows (Winget)"
+            echo '```powershell'
+            echo 'winget install GSETLang.GSET'
+            echo '```'"
             echo ""
             echo "### Manual Install"
-            echo "1. Download the appropriate archive for your platform"
-            echo "2. Extract the archive"
-            echo "3. Make executable: \`chmod +x gset\`"
-            echo "4. Add to PATH: \`mv gset ~/.local/bin/\`"
+            echo "See all platforms and download links on the [release page](https://github.com/Crazygiscool/GSETLang/releases)"
           } > RELEASE_NOTES.md
+
+      - name: Upload PowerShell installer
+        run: |
+          cp install.ps1 dist/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1

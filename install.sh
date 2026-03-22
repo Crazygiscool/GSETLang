@@ -2,11 +2,47 @@
 
 # GSET Install Script
 # One-liner: curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash
+#
+# Supports: Linux, macOS, Windows (Git Bash/WSL/MSYS2)
 
 set -e
 
 VERSION="2.1.2"
 REPO="Crazygiscool/GSETLang"
+
+# Check if running on Windows (Git Bash, WSL, MSYS2, Cygwin)
+is_windows() {
+    case "$(uname -s)" in
+        CYGWIN*|MINGW*|MSYS*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# If on Windows, use PowerShell installer
+if is_windows; then
+    echo ""
+    echo "Detected Windows environment."
+    echo "Using PowerShell installer..."
+    echo ""
+    
+    # Check if PowerShell is available
+    if command -v powershell &> /dev/null; then
+        powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.ps1 | iex"
+    else
+        echo "PowerShell not found. Please use one of these options:"
+        echo ""
+        echo "Option 1: Download directly"
+        echo "  https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-windows-amd64.zip"
+        echo ""
+        echo "Option 2: Install PowerShell then run:"
+        echo "  irm https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.ps1 | iex"
+        echo ""
+        echo "Option 3: Use winget (if installed):"
+        echo "  winget install GSETLang.GSET"
+        exit 1
+    fi
+    exit 0
+fi
 
 # Colors
 RED='\033[0;31m'

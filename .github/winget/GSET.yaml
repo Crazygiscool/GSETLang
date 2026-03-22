@@ -1,0 +1,41 @@
+# Winget manifest for GSET
+# To submit to winget-pkgs:
+# 1. Fork https://github.com/microsoft/winget-pkgs
+# 2. Add this file to manifests/g/GSETLang/GSET/
+# 3. Submit PR
+
+Identifier: GSETLang.GSET
+Version: "2.1.2"
+Publisher: GSETLang
+Author: Crazygiscool
+Name: GSET
+Description: Generic Syntax Extension Tool - Write in any language syntax, compile to any language
+License: CC BY-NC 4.0
+Homepage: https://github.com/Crazygiscool/GSETLang
+Documentation: https://gsetlang.vercel.app
+Installer:
+  InstallerUrl: https://github.com/Crazygiscool/GSETLang/releases/latest/download/install.ps1
+  InstallerType: powershell
+  InstallerSwitches:
+    Silent: "-ExecutionPolicy Bypass -Command '& {irm https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.ps1 | iex}'"
+    SilentWithProgress: "-ExecutionPolicy Bypass -Command '& {irm https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.ps1 | iex}'"
+  UpgradeCommand: winget upgrade GSETLang.GSET
+  InstallModes:
+    - Interactive
+    - Silent
+    - SilentWithProgress
+Commands:
+  - gset
+ShortDescription: Generic Syntax Extension Tool
+Tags:
+  - transpiler
+  - compiler
+  - language
+  - syntax
+  - multi-platform
+  - python
+  - javascript
+  - golang
+ReleaseNotes: |
+  See https://github.com/Crazygiscool/GSETLang/releases for full changelog.
+ReleaseNotesUrl: https://github.com/Crazygiscool/GSETLang/releases

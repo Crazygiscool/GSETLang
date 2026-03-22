@@ -36,7 +36,7 @@ for i in nums {
 ## Quick Install (One-Liner)
 
 ```bash
-# Linux / macOS
+# Linux / macOS / Windows (Git Bash/WSL)
 curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash
 ```
 
@@ -47,31 +47,66 @@ That's it! The script auto-detects your OS and architecture.
 ## Installation Methods
 
 ### 1. Quick Install (Recommended)
+
+**Linux / macOS / Windows (Git Bash, WSL, MSYS2)**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash
 ```
 
-### 2. Manual Download
-```bash
-# Linux (amd64)
-wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-amd64.tar.gz
-tar -xzf gset-linux-amd64.tar.gz
-chmod +x gset
-mv gset ~/.local/bin/
-
-# macOS (Apple Silicon)
-wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-darwin-arm64.tar.gz
-tar -xzf gset-darwin-arm64.tar.gz
-chmod +x gset
-mv gset ~/.local/bin/
-
-# Windows (PowerShell)
-irm https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-windows-amd64.zip -OutFile gset.zip
-Expand-Archive gset.zip -DestinationPath .
-# Add to PATH manually
+**Windows (PowerShell)**
+```powershell
+irm https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.ps1 | iex
 ```
 
-### 3. Arch Linux (AUR)
+### 2. Winget (Windows)
+
+```powershell
+winget install GSETLang.GSET
+```
+
+### 3. Scoop (Windows)
+
+```powershell
+scoop bucket add extras
+scoop install gset
+```
+
+### 4. Manual Download
+
+**Linux**
+```bash
+wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-amd64.tar.gz
+tar -xzf gset-linux-amd64.tar.gz
+chmod +x gset && mv gset ~/.local/bin/
+```
+
+**macOS**
+```bash
+# Intel
+wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-darwin-amd64.tar.gz
+# Apple Silicon
+wget https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-darwin-arm64.tar.gz
+tar -xzf gset-darwin-*.tar.gz
+chmod +x gset && mv gset ~/.local/bin/
+```
+
+**Windows (PowerShell)**
+```powershell
+irm https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-windows-amd64.zip -OutFile gset.zip
+Expand-Archive gset.zip -DestinationPath C:\Tools\gset
+# Add C:\Tools\gset to your PATH
+```
+
+### 5. Build from Source
+
+```bash
+git clone https://github.com/Crazygiscool/GSETLang
+cd GSETLang
+go build -o gset .
+```
+
+### 6. Arch Linux (AUR)
+
 ```bash
 yay -S gset-git
 # or
