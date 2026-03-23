@@ -2,7 +2,7 @@
 
 .PHONY: all build test clean install crossbuild release
 
-VERSION := 2.1.2
+VERSION := 2.1.3
 REPO := github.com/Crazygiscool/GSETLang
 
 all: build
