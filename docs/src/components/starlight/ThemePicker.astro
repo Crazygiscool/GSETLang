@@ -1,0 +1,195 @@
+---
+import type { Props } from '@astrojs/starlight/props';
+---
+
+<div class="theme-picker-wrapper">
+	<button class="theme-picker-button" type="button" aria-label="Select theme">
+		<span class="theme-color-preview default"></span>
+		<span class="theme-name">Purple</span>
+		<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+	</button>
+	<div class="theme-picker-dropdown">
+		<button class="theme-option active" type="button" data-theme="">
+			<span class="theme-color-preview default"></span>
+			<span>Purple</span>
+		</button>
+		<button class="theme-option" type="button" data-theme="dracula">
+			<span class="theme-color-preview dracula"></span>
+			<span>Dracula</span>
+		</button>
+		<button class="theme-option" type="button" data-theme="nord">
+			<span class="theme-color-preview nord"></span>
+			<span>Nord</span>
+		</button>
+		<button class="theme-option" type="button" data-theme="one-dark">
+			<span class="theme-color-preview one-dark"></span>
+			<span>One Dark Pro</span>
+		</button>
+		<button class="theme-option" type="button" data-theme="github-dark-dimmed">
+			<span class="theme-color-preview github-dark-dimmed"></span>
+			<span>GitHub Dimmed</span>
+		</button>
+		<button class="theme-option" type="button" data-theme="night-owl">
+			<span class="theme-color-preview night-owl"></span>
+			<span>Night Owl</span>
+		</button>
+		<button class="theme-option" type="button" data-theme="tokyo-night">
+			<span class="theme-color-preview tokyo-night"></span>
+			<span>Tokyo Night</span>
+		</button>
+		<button class="theme-option" type="button" data-theme="glowfish">
+			<span class="theme-color-preview glowfish"></span>
+			<span>Glow Fish</span>
+		</button>
+	</div>
+</div>
+
+<style>
+	.theme-picker-wrapper {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+	}
+
+	.theme-picker-button {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		background: transparent;
+		border: 1px solid rgba(139, 92, 246, 0.2);
+		border-radius: 8px;
+		color: var(--sl-color-gray-3);
+		cursor: pointer;
+		font-size: 0.875rem;
+		transition: all 0.2s ease;
+	}
+
+	.theme-picker-button:hover {
+		background: rgba(139, 92, 246, 0.1);
+		border-color: var(--sl-color-accent);
+		color: var(--sl-color-gray-1);
+	}
+
+	.theme-picker-dropdown {
+		position: absolute;
+		top: 100%;
+		right: 0;
+		margin-top: 0.5rem;
+		min-width: 180px;
+		background: var(--sl-color-gray-6);
+		border: 1px solid rgba(139, 92, 246, 0.2);
+		border-radius: 8px;
+		overflow: hidden;
+		z-index: 100;
+		opacity: 0;
+		visibility: hidden;
+		transform: translateY(-10px);
+		transition: all 0.2s ease;
+		box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+	}
+
+	.theme-picker-wrapper:focus-within .theme-picker-dropdown,
+	.theme-picker-wrapper:focus .theme-picker-dropdown,
+	.theme-picker-wrapper:hover .theme-picker-dropdown {
+		opacity: 1;
+		visibility: visible;
+		transform: translateY(0);
+	}
+
+	.theme-option {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		width: 100%;
+		padding: 0.625rem 0.875rem;
+		background: transparent;
+		border: none;
+		color: var(--sl-color-gray-3);
+		font-size: 0.875rem;
+		cursor: pointer;
+		transition: all 0.15s ease;
+		text-align: left;
+	}
+
+	.theme-option:hover {
+		background: rgba(139, 92, 246, 0.15);
+		color: var(--sl-color-gray-1);
+	}
+
+	.theme-option.active {
+		background: rgba(139, 92, 246, 0.2);
+		color: var(--sl-color-accent);
+	}
+
+	.theme-color-preview {
+		width: 20px;
+		height: 20px;
+		border-radius: 4px;
+		flex-shrink: 0;
+	}
+
+	.theme-color-preview.default { background: linear-gradient(135deg, #6366f1, #a855f7); }
+	.theme-color-preview.dracula { background: linear-gradient(135deg, #bd93f9, #ff79c6); }
+	.theme-color-preview.nord { background: linear-gradient(135deg, #88c0d0, #b48ead); }
+	.theme-color-preview.one-dark { background: linear-gradient(135deg, #c792ea, #89ddff); }
+	.theme-color-preview.github-dark-dimmed { background: linear-gradient(135deg, #539bf5, #6cb6ff); }
+	.theme-color-preview.night-owl { background: linear-gradient(135deg, #82aaff, #c792ea); }
+	.theme-color-preview.tokyo-night { background: linear-gradient(135deg, #7aa2f7, #bb9af7); }
+	.theme-color-preview.glowfish { background: linear-gradient(135deg, #ff7eb6, #7afcff); }
+</style>
+
+<script>
+	const themes = [
+		{ id: '', name: 'Purple' },
+		{ id: 'dracula', name: 'Dracula' },
+		{ id: 'nord', name: 'Nord' },
+		{ id: 'one-dark', name: 'One Dark Pro' },
+		{ id: 'github-dark-dimmed', name: 'GitHub Dimmed' },
+		{ id: 'night-owl', name: 'Night Owl' },
+		{ id: 'tokyo-night', name: 'Tokyo Night' },
+		{ id: 'glowfish', name: 'Glow Fish' },
+	];
+
+	function initThemePicker() {
+		const wrapper = document.querySelector('.theme-picker-wrapper');
+		if (!wrapper) return;
+
+		const button = wrapper.querySelector('.theme-picker-button');
+		const dropdown = wrapper.querySelector('.theme-picker-dropdown');
+		const options = wrapper.querySelectorAll('.theme-option');
+
+		const currentTheme = document.documentElement.getAttribute('data-theme') || '';
+		const currentThemeData = themes.find(t => t.id === currentTheme) || themes[0];
+
+		const nameSpan = button?.querySelector('.theme-name');
+		if (nameSpan) nameSpan.textContent = currentThemeData.name;
+
+		const preview = button?.querySelector('.theme-color-preview');
+		if (preview) preview.className = `theme-color-preview ${currentThemeData.id || 'default'}`;
+
+		options.forEach(opt => {
+			const themeId = opt.getAttribute('data-theme');
+			opt.classList.toggle('active', themeId === currentTheme);
+
+			opt.addEventListener('click', () => {
+				const newTheme = themeId || null;
+				document.documentElement.setAttribute('data-theme', newTheme || '');
+				localStorage.setItem('starlight-theme', newTheme || 'default');
+
+				const newName = opt.querySelector('span:last-child')?.textContent || '';
+				if (nameSpan) nameSpan.textContent = newName;
+
+				const newPreview = button?.querySelector('.theme-color-preview');
+				if (newPreview) newPreview.className = `theme-color-preview ${themeId || 'default'}`;
+
+				options.forEach(o => {
+					o.classList.toggle('active', o.getAttribute('data-theme') === themeId);
+				});
+			});
+		});
+	}
+
+	initThemePicker();
+	document.addEventListener('astro:after-swap', initThemePicker);
+</script>
