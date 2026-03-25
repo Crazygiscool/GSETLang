@@ -24,7 +24,6 @@ export default defineConfig({
 			logo: {
 				src: './src/assets/gset-logo.svg',
 			},
-			defaultTheme: 'github-dark-dimmed',
 			defaultLocale: 'root',
 			locales: {
 				root: { label: 'English', lang: 'en' },
