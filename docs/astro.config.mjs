@@ -9,19 +9,8 @@ export default defineConfig({
 	adapter: vercel(),
 	integrations: [
 		expressiveCode({
-			themes: ['github-light', 'dracula', 'github-dark-dimmed', 'one-dark-pro', 'nord', 'night-owl', 'tokyo-night'],
-			themeCssSelector: (theme) => {
-				const themeMap = {
-					'github-light': 'github-light',
-					'dracula': 'dracula',
-					'github-dark-dimmed': 'github-dark-dimmed',
-					'one-dark-pro': 'one-dark',
-					'nord': 'nord',
-					'night-owl': 'night-owl',
-					'tokyo-night': 'tokyo-night',
-				};
-				return `[data-theme='${themeMap[theme.name] || theme.name}']`;
-			},
+			themes: ['github-dark-dimmed'],
+			themeCssSelector: () => '[data-theme]',
 			styleOverrides: {
 				borderRadius: '0.5rem',
 				frames: {
@@ -35,6 +24,7 @@ export default defineConfig({
 			logo: {
 				src: './src/assets/gset-logo.svg',
 			},
+			defaultTheme: 'github-dark-dimmed',
 			defaultLocale: 'root',
 			locales: {
 				root: { label: 'English', lang: 'en' },
