@@ -1,16 +1,27 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+var (
+	ErrInvalidKey    = errors.New("invalid configuration key")
+	ErrInvalidValue  = errors.New("invalid configuration value")
+	ErrUnsafeCommand = errors.New("unsafe command in configuration")
+)
+
+const maxConfigSize = 1024 * 1024 // 1MB
+const maxKeywords = 1000
 
 type GSETConfig struct {
 	Keywords       map[string]string
 	GlobalKeywords map[string]string
 	ExtKeywords    map[string]string
 	Compilers      map[string]CompilerConfig
+	loadedFrom     string
 }
 
 type CompilerConfig struct {
@@ -20,12 +31,23 @@ type CompilerConfig struct {
 	Run     string
 }
 
-func LoadConfig(filePath string) GSETConfig {
+type ValidationResult struct {
+	Errors   []string
+	Warnings []string
+}
+
+func LoadConfig(filePath string) (GSETConfig, error) {
 	conf := GSETConfig{
 		Keywords:       make(map[string]string),
 		GlobalKeywords: make(map[string]string),
 		ExtKeywords:    make(map[string]string),
 		Compilers:      make(map[string]CompilerConfig),
+		loadedFrom:     "",
+	}
+
+	if filePath == "" {
+		execDir, _ := os.Getwd()
+		filePath = execDir
 	}
 
 	dir := filepath.Dir(filePath)
@@ -40,12 +62,63 @@ func LoadConfig(filePath string) GSETConfig {
 
 	for _, cf := range confFiles {
 		if data, err := os.ReadFile(cf); err == nil {
+			if len(string(data)) > maxConfigSize {
+				return conf, ErrInvalidValue
+			}
 			conf.loadConfigFile(string(data))
+			conf.loadedFrom = cf
 			break
 		}
 	}
 
-	return conf
+	return conf, nil
+}
+
+func ValidateConfig(conf GSETConfig) ValidationResult {
+	result := ValidationResult{
+		Errors:   []string{},
+		Warnings: []string{},
+	}
+
+	if len(conf.GlobalKeywords) > maxKeywords {
+		result.Errors = append(result.Errors, "too many global keywords")
+	}
+
+	if len(conf.ExtKeywords) > maxKeywords {
+		result.Errors = append(result.Errors, "too many extension keywords")
+	}
+
+	for ext, cfg := range conf.Compilers {
+		if err := validateCompilerConfig(ext, cfg); err != nil {
+			result.Errors = append(result.Errors, err.Error())
+		}
+	}
+
+	return result
+}
+
+func validateCompilerConfig(ext string, cfg CompilerConfig) error {
+	if cfg.Command == "" {
+		return nil
+	}
+
+	dangerousCommands := []string{"rm", "del", "format", "mkfs", "dd"}
+	lowerCmd := strings.ToLower(cfg.Command)
+	for _, dc := range dangerousCommands {
+		if strings.Contains(lowerCmd, dc) {
+			return ErrUnsafeCommand
+		}
+	}
+
+	if strings.Contains(cfg.Command, "..") {
+		return ErrUnsafeCommand
+	}
+
+	return nil
+}
+
+func (c *GSETConfig) Validate() ValidationResult {
+	return ValidateConfig(*c)
 }
 
 func (c *GSETConfig) loadConfigFile(content string) {

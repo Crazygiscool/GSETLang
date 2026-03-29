@@ -1,6 +1,6 @@
 # GSET Makefile
 
-.PHONY: all build test clean install crossbuild release
+.PHONY: all build test test-race test-verbose benchmark clean install crossbuild release
 
 VERSION := 2.1.3
 REPO := github.com/Crazygiscool/GSETLang
@@ -25,6 +25,18 @@ debug:
 # Run tests
 test:
 	go test ./...
+
+# Run tests with race detector
+test-race:
+	go test -race ./...
+
+# Run tests with verbose output
+test-verbose:
+	go test -v ./...
+
+# Run benchmark tests
+benchmark:
+	go test -bench=. -benchmem ./...
 
 # Run test files
 test-files:
@@ -84,15 +96,18 @@ help:
 	@echo "GSET Makefile"
 	@echo ""
 	@echo "Targets:"
-	@echo "  build       - Build for current platform"
-	@echo "  debug       - Build with debug info"
-	@echo "  test        - Run Go tests"
+	@echo "  build        - Build for current platform"
+	@echo "  debug        - Build with debug info"
+	@echo "  test         - Run Go tests"
+	@echo "  test-race    - Run tests with race detector"
+	@echo "  test-verbose - Run tests with verbose output"
+	@echo "  benchmark    - Run benchmark tests"
 	@echo "  test-files  - Run test .gset files"
-	@echo "  clean       - Remove build artifacts"
-	@echo "  crossbuild  - Build for all platforms"
-	@echo "  release     - Create GitHub release"
-	@echo "  install     - Install locally"
-	@echo "  uninstall   - Remove local installation"
-	@echo "  fmt         - Format code"
-	@echo "  lint        - Lint code"
-	@echo "  help        - Show this help"
+	@echo "  clean        - Remove build artifacts"
+	@echo "  crossbuild   - Build for all platforms"
+	@echo "  release      - Create GitHub release"
+	@echo "  install      - Install locally"
+	@echo "  uninstall    - Remove local installation"
+	@echo "  fmt          - Format code"
+	@echo "  lint         - Lint code"
+	@echo "  help         - Show this help"

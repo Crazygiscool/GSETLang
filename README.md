@@ -7,6 +7,8 @@
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-yellow)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Release](https://img.shields.io/github/v/release/Crazygiscool/GSETLang)](https://github.com/Crazygiscool/GSETLang/releases)
+[![Tests](https://img.shields.io/github/actions/workflow/status/Crazygiscool/GSETLang/test.yml)](https://github.com/Crazygiscool/GSETLang/actions)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Crazygiscool/GSETLang)](https://goreportcard.com/report/github.com/Crazygiscool/GSETLang)
 
 </div>
 
@@ -14,7 +16,7 @@
 
 ## What is GSET?
 
-GSET v2.1.2 is a transpiler that allows you to write code using any language's syntax (Python, JavaScript, Java, Go, etc.) and compile it to run on any target language's runtime.
+GSET (Generic Syntax Extension Tool) v2.1.3 is a transpiler that allows you to write code using any language's syntax (Python, JavaScript, Java, Go, etc.) and compile it to run on any target language's runtime.
 
 **Write this:**
 ```gset
@@ -111,21 +113,6 @@ go build -o gset .
 yay -S gset-git
 # or
 paru -S gset-git
-```
-
-### 4. Build from Source
-```bash
-git clone https://github.com/Crazygiscool/GSETLang
-cd GSETLang
-go build -o gset .
-# or
-make build
-```
-
-### 5. Install with Make
-```bash
-make install  # Install to ~/.local/bin
-make uninstall  # Remove installation
 ```
 
 ---
@@ -232,6 +219,41 @@ squared = [x * x for x in nums]
 evens = [x for x in nums if x % 2 == 0]
 ```
 
+### Classes
+```gset
+class Person {
+    name = "John"
+    age = 30
+    
+    function greet() {
+        print("Hello, my name is " + name)
+    }
+}
+```
+
+### Error Handling
+```gset
+try {
+    result = riskyOperation()
+} catch e {
+    print("Error: " + e)
+} finally {
+    cleanup()
+}
+```
+
+### Pattern Matching (Match)
+```gset
+match value {
+    case 1:
+        print("one")
+    case 2:
+        print("two")
+    default:
+        print("other")
+}
+```
+
 ---
 
 ## Language Targets
@@ -240,13 +262,20 @@ GSET auto-detects target language from file extension:
 
 | Extension | Target Compiler | Example Output |
 |-----------|-----------------|----------------|
+| `.gset` | Go (default) | `fmt.Println("Hello")` |
 | `.py` | Python | `print("Hello")` |
 | `.js` | Node.js | `console.log("Hello")` |
 | `.go` | Go | `fmt.Println("Hello")` |
 | `.java` | Java | `System.out.println("Hello")` |
 | `.rb` | Ruby | `puts "Hello"` |
 | `.php` | PHP | `echo "Hello";` |
-| `.gset` | Go (default) | `fmt.Println("Hello")` |
+| `.ts` | TypeScript | `console.log("Hello")` |
+| `.cs` | C# | `Console.WriteLine("Hello")` |
+| `.rs` | Rust | `println!("Hello")` |
+| `.swift` | Swift | `print("Hello")` |
+| `.kt` | Kotlin | `println("Hello")` |
+| `.cpp` | C++ | `std::cout << "Hello" << std::endl` |
+| `.c` | C | `printf("Hello\n")` |
 
 ---
 
@@ -275,17 +304,34 @@ ext.java.say=System.out.println
 
 ---
 
-## Available Platforms
+## Security Features
 
-| OS | Arch | Download |
-|----|-------|----------|
-| Linux | amd64 | [gset-linux-amd64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-amd64.tar.gz) |
-| Linux | arm64 | [gset-linux-arm64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-arm64.tar.gz) |
-| Linux | 386 | [gset-linux-386.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-386.tar.gz) |
-| macOS | amd64 | [gset-darwin-amd64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-darwin-amd64.tar.gz) |
-| macOS | arm64 | [gset-darwin-arm64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-darwin-arm64.tar.gz) |
-| Windows | amd64 | [gset-windows-amd64.zip](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-windows-amd64.zip) |
-| Windows | 386 | [gset-windows-386.zip](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-windows-386.zip) |
+GSET includes comprehensive security hardening for safe operation:
+
+### Input Validation
+- **Path Traversal Prevention**: Blocks `../` and similar path traversal attempts
+- **Input Size Limits**: Maximum 10MB input file size
+- **Identifier Validation**: Max 256 character identifiers
+- **Safe File Extensions**: Whitelist-based extension validation
+
+### Command Security
+- **Command Injection Prevention**: Sanitizes shell command arguments
+- **Dangerous Pattern Detection**: Blocks commands containing `;`, `&&`, `||`, `|`, `` ` ``, `$(`
+- **Path Traversal in Commands**: Prevents `..` in command arguments
+
+### Parser Security
+- **Nesting Depth Limits**: Maximum 100 levels of nesting
+- **Statement Limits**: Maximum 1000 statements per block, 10000 per program
+- **Depth Tracking**: Prevents stack overflow from deeply nested code
+
+### Config Validation
+- **Config File Size**: Maximum 1MB configuration file size
+- **Keyword Limits**: Maximum 1000 keywords
+- **Dangerous Command Detection**: Validates compiler commands for safety
+
+### Runtime Security
+- **Safe Temporary Files**: Uses `/tmp` with unique naming
+- **Graceful Shutdown**: Handles SIGINT/SIGTERM for clean exits
 
 ---
 
@@ -298,7 +344,13 @@ cd GSETLang
 make build
 
 # Run tests
-make test-files
+make test
+
+# Run tests with race detector
+make test-race
+
+# Run benchmark tests
+make benchmark
 
 # Cross-compile for all platforms
 make crossbuild
@@ -306,6 +358,79 @@ make crossbuild
 # Install locally
 make install
 ```
+
+---
+
+## Project Structure
+
+```
+GSETLang/
+├── main.go              # Main entry point
+├── parser/              # Parser package
+├── lexer/               # Lexer package
+├── transpiler/          # Transpiler package
+├── config/              # Configuration package
+├── security/           # Security utilities
+├── logger/             # Logging package
+├── test/                # Test files
+├── docs/               # Documentation
+└── packages/          # Distribution packages
+```
+
+---
+
+## Testing
+
+### Unit Tests
+GSET includes comprehensive unit tests for all core packages:
+
+```bash
+# Run all unit tests
+go test ./...
+
+# Run with race detector
+go test -race ./...
+
+# Run benchmarks
+go test -bench=. -benchmem ./...
+```
+
+### Test Coverage
+
+| Package | Tests |
+|---------|-------|
+| lexer | 45+ tests |
+| parser | 20+ tests |
+| transpiler | 20+ tests |
+| security | 8 test suites |
+| config | 2 test suites |
+
+---
+
+## Logging
+
+GSET includes structured logging with multiple levels:
+
+```bash
+# Enable debug logging
+GSET_DEBUG=1 gset run hello.gset
+```
+
+Log levels: DEBUG, INFO, WARN, ERROR, FATAL
+
+---
+
+## Available Platforms
+
+| OS | Arch | Download |
+|----|-------|----------|
+| Linux | amd64 | [gset-linux-amd64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-amd64.tar.gz) |
+| Linux | arm64 | [gset-linux-arm64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-arm64.tar.gz) |
+| Linux | 386 | [gset-linux-386.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-linux-386.tar.gz) |
+| macOS | amd64 | [gset-darwin-amd64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-darwin-amd64.tar.gz) |
+| macOS | arm64 | [gset-darwin-arm64.tar.gz](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-darwin-arm64.tar.gz) |
+| Windows | amd64 | [gset-windows-amd64.zip](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-windows-amd64.zip) |
+| Windows | 386 | [gset-windows-386.zip](https://github.com/Crazygiscool/GSETLang/releases/latest/download/gset-windows-386.zip) |
 
 ---
 
@@ -332,6 +457,6 @@ See [LICENSE](LICENSE) for full text.
 
 <div align="center">
 
-**Version:** 2.1.2 | **License:** CC BY-NC 4.0 | **Copyright:** 2024-2026 GSET Team
+**Version:** 2.1.3 | **License:** CC BY-NC 4.0 | **Copyright:** 2024-2026 GSET Team
 
 </div>

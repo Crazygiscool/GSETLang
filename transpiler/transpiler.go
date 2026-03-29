@@ -397,15 +397,23 @@ func GetCompilers() map[string]CompilerConfig {
 	return map[string]CompilerConfig{
 		"py":   {Command: "python3", Args: "", Wrapper: ""},
 		"js":   {Command: "node", Args: "", Wrapper: ""},
-		"go":   {Command: "go run", Args: "", Wrapper: ""},
+		"go":   {Command: "go", Args: "run", Wrapper: ""},
 		"rb":   {Command: "ruby", Args: "", Wrapper: ""},
 		"java": {Command: "java", Args: "", Wrapper: "public class Main { public static void main(String[] args) { ##CODE## }}"},
 	}
 }
 
-func (e *Executor) Execute(program *ast.Program, ext, filename string, keep bool) {
+func (e *Executor) Execute(program *ast.Program, ext, filename string, keep bool) error {
 	t := New(nil)
 	code := t.Translate(program)
+
+	if code == "" {
+		return nil
+	}
+
+	if len(code) > 10*1024*1024 {
+		return fmt.Errorf("generated code exceeds maximum size (10MB)")
+	}
 
 	needsFmt := strings.Contains(code, "fmt.")
 
@@ -436,24 +444,28 @@ func (e *Executor) Execute(program *ast.Program, ext, filename string, keep bool
 	case "py":
 		tmpFile = "/tmp/gset_" + baseName + ".py"
 	case "js":
-		tmpFile = "/tmp/gset_" + filename + ".js"
+		tmpFile = "/tmp/gset_" + baseName + ".js"
 	case "java":
 		tmpFile = "Main.java"
 	case "rb":
-		tmpFile = "/tmp/gset_" + filename + ".rb"
+		tmpFile = "/tmp/gset_" + baseName + ".rb"
 	case "go":
-		tmpFile = "/tmp/gset_" + filename + ".go"
+		tmpFile = "/tmp/gset_" + baseName + ".go"
 	default:
 		tmpFile = "/tmp/gset_exec." + ext
 	}
 
-	os.WriteFile(tmpFile, []byte(wrapper), 0644)
+	if err := os.WriteFile(tmpFile, []byte(wrapper), 0644); err != nil {
+		return fmt.Errorf("failed to write temporary file: %w", err)
+	}
 
 	fmt.Printf("--- COMPILING WITH %s ---\n", ext)
 
 	var args []string
 	if compCfg.Args != "" {
 		args = strings.Split(compCfg.Args, " ")
+	} else if ext == "go" {
+		args = []string{"run"}
 	}
 	args = append(args, tmpFile)
 	cmd := exec.Command(compCfg.Command, args...)
@@ -462,7 +474,15 @@ func (e *Executor) Execute(program *ast.Program, ext, filename string, keep bool
 	cmd.Stderr = os.Stderr
 
 	fmt.Println("--- RUNNING GSET OUTPUT ---")
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if !keep {
+			os.Remove(tmpFile)
+			if ext == "java" {
+				os.Remove("Main.class")
+			}
+		}
+		return fmt.Errorf("execution failed: %w", err)
+	}
 
 	if !keep {
 		os.Remove(tmpFile)
@@ -470,4 +490,5 @@ func (e *Executor) Execute(program *ast.Program, ext, filename string, keep bool
 			os.Remove("Main.class")
 		}
 	}
+	return nil
 }

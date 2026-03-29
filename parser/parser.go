@@ -8,16 +8,19 @@ import (
 	"strings"
 )
 
+const maxDepth = 100
+
 type Parser struct {
 	l       *lexer.Lexer
 	curTok  ast.Token
 	peekTok ast.Token
 	errors  []string
 	prog    *ast.Program
+	depth   int
 }
 
 func New(l *lexer.Lexer) *Parser {
-	p := &Parser{l: l, errors: []string{}, prog: &ast.Program{Statements: []ast.Statement{}, Imports: []*ast.ImportStatement{}}}
+	p := &Parser{l: l, errors: []string{}, prog: &ast.Program{Statements: []ast.Statement{}, Imports: []*ast.ImportStatement{}}, depth: 0}
 	p.peekTok = l.NextToken()
 	p.nextToken()
 	return p
@@ -34,6 +37,25 @@ func (p *Parser) peekError(t string) {
 	p.errors = append(p.errors, fmt.Sprintf("line %d: expected %s, got %s", p.curTok.Line, t, p.peekTok.Type))
 }
 
+func (p *Parser) addError(format string, args ...interface{}) {
+	p.errors = append(p.errors, fmt.Sprintf(format, args...))
+}
+
+func (p *Parser) checkDepth() bool {
+	if p.depth > maxDepth {
+		p.addError("maximum nesting depth exceeded (%d)", maxDepth)
+		return false
+	}
+	p.depth++
+	return true
+}
+
+func (p *Parser) reduceDepth() {
+	if p.depth > 0 {
+		p.depth--
+	}
+}
+
 func (p *Parser) ParseProgram() *ast.Program {
 	for p.curTok.Type != "EOF" {
 		for p.curTok.Type == "NEWLINE" || p.curTok.Type == "SEMICOLON" {
@@ -44,6 +66,10 @@ func (p *Parser) ParseProgram() *ast.Program {
 				p.nextToken()
 			}
 			continue
+		}
+		if len(p.prog.Statements) > 10000 {
+			p.addError("too many statements in program")
+			break
 		}
 		if p.curTok.Type == "IMPORT" {
 			if imp := p.parseImportStatement(); imp != nil {
@@ -661,6 +687,11 @@ func (p *Parser) parseContinueStatement() ast.Statement {
 
 // Block Statement
 func (p *Parser) parseBlock() *ast.BlockStatement {
+	if !p.checkDepth() {
+		return &ast.BlockStatement{Token: p.curTok, Statements: []ast.Statement{}}
+	}
+	defer p.reduceDepth()
+
 	if p.curTok.Type != "LBRACE" {
 		p.peekError("LBRACE")
 		return &ast.BlockStatement{Token: p.curTok}
@@ -674,6 +705,10 @@ func (p *Parser) parseBlock() *ast.BlockStatement {
 			p.nextToken()
 		}
 		if p.curTok.Type == "RBRACE" || p.curTok.Type == "EOF" {
+			break
+		}
+		if len(block.Statements) > 1000 {
+			p.addError("too many statements in block")
 			break
 		}
 		if stmt := p.parseStatement(); stmt != nil {
