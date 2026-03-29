@@ -32,7 +32,7 @@ jobs:
 
       - name: Get version
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Build
         env:
@@ -43,7 +43,7 @@ jobs:
           if [ "${{ matrix.goos }}" = "windows" ]; then
             OUTPUT_NAME="${OUTPUT_NAME}.exe"
           fi
-          GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="-s -w" -o "$OUTPUT_NAME" .
+          GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" -o "$OUTPUT_NAME" .
 
       - name: Create archive
         env:
@@ -62,46 +62,8 @@ jobs:
           path: gset-${{ matrix.goos }}-${{ matrix.goarch }}*
           retention-days: 5
 
-  installer:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install NSIS
-        run: sudo apt-get update && sudo apt-get install -y nsis
-
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: gset-windows-amd64
-          path: dist
-
-      - name: Prepare installer files
-        run: |
-          mkdir -p installer_temp
-          cp dist/gset-windows-amd64.exe installer_temp/gset.exe
-          cp LICENSE installer_temp/
-          cp installer.nsi installer_temp/
-
-      - name: Build NSIS installer
-        run: |
-          cd installer_temp
-          makensis installer.nsi
-          mv gset-setup.exe ../dist/
-          cd ..
-          rm -rf installer_temp
-
-      - name: Upload installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: gset-installer
-          path: dist/gset-setup.exe
-          retention-days: 5
-
   release:
-    needs: [build, installer]
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -113,57 +75,78 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: List artifacts
+        run: ls -la dist/
+
       - name: Create checksums
+        working-directory: dist
         run: |
-          cd dist
           sha256sum * > SHA256SUMS.txt
-          echo "Release files:"
-          ls -lh
+          cat SHA256SUMS.txt
 
       - name: Generate Release Notes
         id: notes
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          git fetch --tags
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          cat > RELEASE_NOTES.md << 'EOF'
+          # GSET v$VERSION Release
 
-          {
-            echo "# Changes since ${PREV_TAG:-initial release}"
-            echo ""
-            if [ -n "$PREV_TAG" ]; then
-              git log $PREV_TAG..HEAD --pretty=format="- %s" 2>/dev/null || echo "- Minor improvements"
-            else
-              git log --pretty=format="- %s" -10
-            fi
-            echo ""
-            echo "## Installation"
-            echo ""
-            echo "### Linux / macOS / Windows (Git Bash)"
-            echo '```bash'
-            echo 'curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash'
-            echo '```'"
-            echo ""
-            echo "### Windows (Winget)"
-            echo '```powershell'
-            echo 'winget install GSETLang.GSET'
-            echo '```'"
-            echo ""
-            echo "### Windows (Manual Install)"
-            echo "Download and run [gset-setup.exe](https://github.com/Crazygiscool/GSETLang/releases/download/${VERSION}/gset-setup.exe)"
-            echo ""
-            echo "### Manual Install"
-            echo "See all platforms and download links on the [release page](https://github.com/Crazygiscool/GSETLang/releases)"
-          } > RELEASE_NOTES.md
+          ## What's New
+          
+          This release includes major production-ready improvements:
+          
+          - Comprehensive unit tests for all core packages
+          - Security hardening with input validation
+          - Parser depth tracking and limits
+          - Config validation with dangerous command detection
+          - Structured logging
+          - Graceful shutdown handling
+          - Benchmark tests
+          - Race detector support
+          
+          ## Installation
+          
+          ### Linux / macOS / Windows (Git Bash)
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash
+          ```
+          
+          ### Windows (Winget)
+          ```powershell
+          winget install GSETLang.GSET
+          ```
+          
+          ### Windows (Scoop)
+          ```powershell
+          scoop bucket add extras
+          scoop install gset
+          ```
+          
+          ### Manual Install
+          Download the appropriate archive for your platform from the assets below.
+          
+          ## Supported Platforms
+          
+          - Linux amd64, arm64, 386
+          - macOS amd64, arm64
+          - Windows amd64, 386
+          
+          ## Checksums
+          
+          Verify your downloads using the SHA256SUMS.txt file.
+          
+          ---
+          
+          **Full Changelog**: https://github.com/Crazygiscool/GSETLang/compare/v2.1.3...$VERSION
+          EOF
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Notify
-        run: |
-          echo "Release created: ${{ github.ref_name }}"
-          echo "Link: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
