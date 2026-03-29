@@ -171,10 +171,6 @@ func (t *Transpiler) translateDoWhileStatement(s *ast.DoWhileStatement) string {
 	return out
 }
 
-func (t *Transpiler) translateForStatementOld(s *ast.ForStatement) string {
-	return t.translateForStatement(s)
-}
-
 func (t *Transpiler) translateFunctionStatement(s *ast.FunctionStatement) string {
 	name := ""
 	if s.Name != nil {

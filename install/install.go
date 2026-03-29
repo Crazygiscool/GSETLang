@@ -76,7 +76,7 @@ func installLinux(exePath string) {
 		}
 
 		if err := copyFile(exePath, dest); err == nil {
-			os.Chmod(dest, 0755)
+			_ = os.Chmod(dest, 0755)
 			fmt.Printf("Installed to: %s\n", dest)
 			return
 		}

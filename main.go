@@ -17,7 +17,6 @@ import (
 )
 
 var version = "dev"
-var interrupted = false
 
 func main() {
 	log := logger.Default()
@@ -33,7 +32,6 @@ func main() {
 	go func() {
 		<-sigChan
 		log.Warn("received interrupt signal, shutting down...")
-		interrupted = true
 		os.Exit(130)
 	}()
 

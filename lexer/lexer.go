@@ -664,18 +664,6 @@ var keywords = map[string]string{
 	"noinline": "NOINLINE",
 }
 
-var keywordAliases = map[string]string{
-	"func": "fn",
-	"def":  "fn",
-	"val":  "let",
-	"elif": "else if",
-	"None": "nil",
-	"self": "this",
-	"and":  "&&",
-	"or":   "||",
-	"not":  "!",
-}
-
 func lookupIdent(s string) string {
 	if tok, ok := keywords[s]; ok {
 		return tok
