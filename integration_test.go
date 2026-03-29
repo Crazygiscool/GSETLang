@@ -9,6 +9,9 @@ import (
 )
 
 func TestIntegration_HelloWorld(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	content := `print("Hello, World!")`
 
 	tmpDir := t.TempDir()
@@ -31,6 +34,10 @@ func TestIntegration_HelloWorld(t *testing.T) {
 }
 
 func TestIntegration_Variables(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 x = 5
 print(x)
@@ -52,6 +59,10 @@ print(x)
 }
 
 func TestIntegration_ForLoop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 nums = [1, 2, 3]
 for i in nums {
@@ -75,6 +86,10 @@ for i in nums {
 }
 
 func TestIntegration_WhileLoop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 count = 3
 while count > 0 {
@@ -99,6 +114,10 @@ while count > 0 {
 }
 
 func TestIntegration_IfElse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 x = 10
 if x > 5 {
@@ -128,6 +147,10 @@ if x > 5 {
 }
 
 func TestIntegration_Function(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 function add(a, b) {
     return a + b
@@ -153,6 +176,10 @@ print(result)
 }
 
 func TestIntegration_Transpile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `print("test")`
 
 	tmpDir := t.TempDir()
@@ -175,6 +202,10 @@ func TestIntegration_Transpile(t *testing.T) {
 }
 
 func TestIntegration_TryCatch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 try {
     print("try")
@@ -201,6 +232,10 @@ try {
 }
 
 func TestIntegration_Class(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 class Person {
     name = "John"
@@ -226,6 +261,10 @@ class Person {
 }
 
 func TestIntegration_ListComprehension(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 nums = [1, 2, 3, 4, 5]
 squared = [x * x for x in nums]
@@ -248,6 +287,10 @@ print(squared)
 }
 
 func TestIntegration_Match(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 x = 2
 match x {
@@ -276,6 +319,10 @@ match x {
 }
 
 func TestIntegration_TranspileToPython(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `print("hello")`
 
 	tmpDir := t.TempDir()
@@ -298,6 +345,10 @@ func TestIntegration_TranspileToPython(t *testing.T) {
 }
 
 func TestIntegration_ErrorHandling(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 function broken() {
     this is invalid syntax
@@ -320,6 +371,10 @@ function broken() {
 }
 
 func TestIntegration_NestedFunctions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
 	content := `
 function outer() {
     x = 10
