@@ -1,5 +1,5 @@
 {
   "buildCommand": "cd docs && npm run build",
   "outputDirectory": "docs/.next",
-  "installCommand": "cd docs && npm install"
+  "installCommand": "npm install"
 }
