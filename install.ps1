@@ -16,13 +16,12 @@ function Write-Warn { param([string]$Message) Write-Host "[!] $Message" -Foregro
 function Write-Err { param([string]$Message) Write-Host "[X] $Message" -ForegroundColor Red }
 
 Write-Host ""
-Write-Host "  ____  _____ " -ForegroundColor Cyan -NoNewline
-Write-Host " |  _ \\|  __ \\ " -ForegroundColor White
-Write-Host " | |_) | |__) |____      _____  __ __   ____ _ _   _ " -ForegroundColor Cyan
-Write-Host " |  _ </|  ___/ _ \\ \\ /\\ / / __| \\ \\ / / _` | | | |" -ForegroundColor White
-Write-Host " | |_) | |  | (_) \\ V  V / (__   \\ V / (_| | |_| |" -ForegroundColor Cyan
-Write-Host " |____/|_|   \\___/ \\_/\\_/ \\___|  \\_/ \\__,_|\\__, |" -ForegroundColor White
-Write-Host "                                              |___/ " -ForegroundColor Cyan
+Write-Host "   _____  _____ ______ _______ " -ForegroundColor Cyan -NoNewline
+Write-Host "  / ____|/ ____|  ____|__   __|" -ForegroundColor White
+Write-Host " | |  __| (___ | |__     | |  " -ForegroundColor Cyan
+Write-Host " | | |_ |\___ \|  __|    | |  " -ForegroundColor White
+Write-Host " | |__| |____) | |____   | |   " -ForegroundColor Cyan
+Write-Host "  \_____|_____/|______|  |_| " -ForegroundColor White
 Write-Host "  Generic Syntax Extension Tool - Windows Installer"
 Write-Host ""
 
@@ -99,17 +98,17 @@ if ($GsetExe) {
 # Add to PATH
 if ($AddToPath) {
     Write-Step "Adding to PATH..."
-    
+
     # User-level PATH
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    
+
     if ($UserPath -notlike "*$InstallPath*") {
         [Environment]::SetEnvironmentVariable(
             "Path",
             "$UserPath;$InstallPath",
             "User"
         )
-        
+
         # Update current session PATH
         $env:Path = "$UserPath;$InstallPath;$env:Path"
         Write-Success "Added $InstallPath to user PATH"
