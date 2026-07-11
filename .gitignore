@@ -43,3 +43,4 @@ dist/
 docs/dist/
 docs/node_modules/
 docs/.astro/
+AGENTS.md
