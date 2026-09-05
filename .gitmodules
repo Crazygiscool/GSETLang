@@ -1,0 +1,4 @@
+[submodule "GSETLang-Docs"]
+	path = GSETLang-Docs
+	url = git@github.com:Crazygiscool/GSETLang-Docs.git
+	branch = main
