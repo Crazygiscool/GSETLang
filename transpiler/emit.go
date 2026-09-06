@@ -1263,6 +1263,17 @@ func (e *emitter) goUsesFmt(prog *ast.Program) bool {
 	}
 	var walkBlock func(b *ast.BlockStatement) bool
 	var walkStmt func(s ast.Statement) bool
+	walkBlock = func(b *ast.BlockStatement) bool {
+		if b == nil {
+			return false
+		}
+		for _, s := range b.Statements {
+			if walkStmt(s) {
+				return true
+			}
+		}
+		return false
+	}
 	walkStmt = func(s ast.Statement) bool {
 		if visit(s) {
 			return true
@@ -1280,17 +1291,6 @@ func (e *emitter) goUsesFmt(prog *ast.Program) bool {
 			return walkBlock(v.TryBlock)
 		case *ast.MatchStatement:
 			return e.exprUsesFmt(v.Subject)
-		}
-		return false
-	}
-	walkBlock = func(b *ast.BlockStatement) bool {
-		if b == nil {
-			return false
-		}
-		for _, s := range b.Statements {
-			if walkStmt(s) {
-				return true
-			}
 		}
 		return false
 	}
