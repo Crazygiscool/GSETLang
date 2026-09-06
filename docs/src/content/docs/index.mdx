@@ -1,18 +1,17 @@
 ---
 title: GSET - Generic Syntax Extension Tool
-description: Write in any language syntax, compile to any language runtime.
+description: Write one GSET file, run it in Python, JavaScript, Go, Java, and Ruby.
 template: splash
 hero:
   title: |
     🚀 GSET
-    <span class="gradient-text">Universal Syntax Transpiler</span>
+    <span class="gradient-text">One source. Every runtime.</span>
   tagline: |
-    Write code in Python syntax, compile to Java ☕
-    Use Go patterns in JavaScript ⚡
-    The syntax is yours to choose! ✨
+    Write a program once in GSET's clean, braces-and-`print` syntax.
+    Transpile and run it with Python, JavaScript, Go, Java, or Ruby.
   actions:
     - text: Get Started →
-      link: /getting-started/introduction/
+      link: /getting-started/quick-start/
       icon: right-arrow
     - text: View on GitHub
       link: https://github.com/Crazygiscool/GSETLang
@@ -24,61 +23,97 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 ## ⚡ What is GSET?
 
-GSET (**Generic Syntax Extension Tool**) is a **universal transpiler** that bridges programming languages. Write code using your favorite syntax, then compile and run it on any runtime! 🎯
+GSET (**Generic Syntax Extension Tool**) is a **single-binary transpiler**. You write your program once in a small, procedural, syntax-familiar language — braces, `print`, `if`, `for`, `while`, `function` — and GSET rewrites it into real, runnable source code for one of five supported targets.
 
 <CardGrid stagger>
-  <Card title="🌍 Any Syntax, Any Target" icon="rocket">
-    Write in **Python** syntax and compile to **Java**, or use **Go** patterns in **JavaScript** code. The possibilities are endless!
+  <Card title="🎯 Five Working Targets" icon="rocket">
+    Python, JavaScript, Go, Java, and Ruby backend emitters. Each one generates a complete runnable file with correct wrappers and builtins.
   </Card>
-  <Card title="🔄 Language Mapping" icon="puzzle">
-    Define custom **keyword mappings** between source and target languages. Create your own DSL! ✨
+  <Card title="🔧 Configurable Keywords" icon="setting">
+    `gset.conf` maps aliases like `say` and `shout` to each target's real print function. Custom keywords genuinely change the output.
   </Card>
-  <Card title="⚙️ External Configuration" icon="setting">
-    All settings managed through `gset.conf` - **no hardcoded values**. Stay flexible! 🔧
+  <Card title="🐛 No Frozen Parser" icon="check-circle">
+    `match`/`case`, `try/catch`, and list comprehensions parse and transpile without spinning the CPU.
   </Card>
-  <Card title="🛠️ Multi-Compiler Support" icon="rocket">
-    Supports **Python**, **Node.js**, **Java**, **Go**, **Ruby**, **PHP**, and more! 📦
+  <Card title="🛠️ Single Binary, Zero Dependencies" icon="packages">
+    One static Go binary. The only runtime you need is whichever target you want to execute.
   </Card>
 </CardGrid>
 
-## 🚀 Quick Example
+## 🚀 The 30-Second Example
 
-Write your code in any syntax you prefer:
+Write `hello.gset`:
 
-```python
-# Write in Python-style syntax
-main() {
-    data = [1, 2, 3, 4, 5]
-    for item in data {
-        print("Item:", item)
-    }
+```gset
+var name = "World"
+var count = 3
+print("Hello, " + name)
+while count > 0 {
+    print(count)
+    count = count - 1
 }
 ```
 
-Compile it to your target language. GSET handles the translation automatically! 🎉
+Now run it on three different runtimes. Same file, no changes:
 
-## 📊 Supported Languages
+```bash
+$ gset run hello.gset --target python
+Hello, World
+3
+2
+1
 
-<div class="lang-badges">
-  <span class="lang-badge python">🐍 Python</span>
-  <span class="lang-badge javascript">🟨 JavaScript</span>
-  <span class="lang-badge node">🟢 Node.js</span>
-  <span class="lang-badge java">☕ Java</span>
-  <span class="lang-badge go">🔵 Go</span>
-  <span class="lang-badge ruby">💎 Ruby</span>
-  <span class="lang-badge php">🐘 PHP</span>
-</div>
+$ gset run hello.gset --target javascript
+Hello, World
+3
+2
+1
+
+$ gset run hello.gset --target go
+Hello, World
+3
+2
+1
+```
+
+Here is exactly what GSET generates (streamlined for readability — real output is formatted per target):
+
+```
+# --target python                          // --target javascript            // --target go
+name = "World"                             let name = "World"                package main
+count = 3                                  let count = 3                     import "fmt"
+print("Hello, " + name)                    console.log("Hello, " + name)
+while count > 0:                           while (count > 0) {               func main() {
+    print(count)                               console.log(count)                fmt.Println("Hello, " + name)
+    count = count - 1                          count = count - 1                 for count > 0 {
+                                                  }                                    fmt.Println(count)
+                                                                                      count = count - 1
+                                                                                  }
+                                          }
+```
+
+## 📊 Target Status
+
+| Target | Status |
+|--------|--------|
+| Python | <span class="badge implemented">Implemented</span> |
+| JavaScript | <span class="badge implemented">Implemented</span> |
+| Go | <span class="badge implemented">Implemented</span> |
+| Java | <span class="badge implemented">Implemented</span> |
+| Ruby | <span class="badge implemented">Implemented</span> |
+| C, C++, C#, Rust, PHP, Swift, Kotlin… | <span class="badge planned">Planned</span> |
+
+An [Implemented / Planned legend](/core-concepts/portability/) explains what each badge means. The Go and Java emitters have real limitations around typing and classes — see [Limitations](/concepts/limitations/).
 
 ## 💡 Why GSET?
 
-| Feature | Benefit |
-|---------|---------|
-| 🔓 **Freedom of Syntax** | Choose the syntax that fits your brain |
-| 🎯 **Productivity** | Leverage existing knowledge across languages |
-| 🔧 **Flexibility** | Easy configuration for any use case |
-| 🚀 **Performance** | Run on optimized, battle-tested runtimes |
-| 📚 **Learning** | Understand languages by translating between them |
+| | Benefit |
+|---|---------|
+| 💻 **A small, learnable language** | One syntax to write, not a mental fork of five languages |
+| ⚙️ **Portable logic** | Loops, branches, functions, arrays, and maps move between runtimes |
+| 🎓 **Language learning** | See the same program written the "Python way" and the "Go way" side by side |
+| 🔧 **Honest limits** | Each target page documents exactly what compiles and what does not |
 
 ---
 
-**Ready to transpile?** [Get started →](/getting-started/introduction/)
+**Ready for your first program?** [Quick Start →](/getting-started/quick-start/)

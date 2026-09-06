@@ -1,65 +1,122 @@
 ---
 title: Quick Start
-description: Get up and running with GSET in minutes.
+description: Write your first GSET program, transpile it, and run it.
 ---
 
-## Basic Usage
+<span class="badge implemented">Implemented</span>
 
-Once installed, you can run GSET with a source file:
+This page is a task-oriented tour. You will **install → create → transpile → run**.
+
+## 1. Install
+
+[Install GSET](/getting-started/installation/) (`go build -o gset .` if you cloned the repo), then confirm:
 
 ```bash
-gset run yourfile.gset
+gset version      # GSET v2.2.0
+gset help
 ```
 
-GSET automatically detects the file extension and uses the appropriate compiler.
+## 2. Create a file
 
-## Create Your First GSET File
+Create `hello.gset`:
 
-Create a file called `hello.gset`:
-
+```gset
+print("Hello, GSET!")
 ```
-main() {
-    print("Hello, GSET!")
+
+## 3. Transpile
+
+See the generated source without running it:
+
+```bash
+$ gset transpile hello.gset
+package main
+
+func main() {
+    fmt.Println("Hello, GSET!")
 }
 ```
 
-## Run It
+`.gset` files default to the **Go** target. Pick another target explicitly:
 
 ```bash
-gset run hello.gset
+$ gset transpile hello.gset --target python
+print("Hello, GSET!")
+
+$ gset transpile hello.gset --target javascript
+console.log("Hello, GSET!")
 ```
 
-GSET will transpile and execute the code.
+Save output to a file with `-o`:
 
-## Using Configuration
-
-GSET reads settings from `gset.conf` in the current directory or your home folder.
-
-Example `gset.conf`:
-
-```ini
-[compiler]
-default = python
-
-[python]
-command = python3
-extension = .py
-
-[java]
-command = java
-extension = .java
+```bash
+gset transpile hello.gset --target js -o hello.js
 ```
 
-## Command Line Options
+## 4. Run
 
-| Option | Description |
-|--------|-------------|
-| `gset run <file>` | Transpile and run a file |
-| `gset version` | Show version information |
-| `gset help` | Display help message |
+```bash
+$ gset run hello.gset
+Hello, GSET!
+```
 
-## Next Steps
+`gset run` transpiles and executes with the target toolchain in one step. Because `hello.gset` is a `.gset` file it runs on the Go target by default.
 
-- Learn about [keyword mapping](/core-concepts/keyword-mapping/)
-- Explore [configuration options](/core-concepts/configuration/)
-- See [examples](/examples/basic-usage/)
+## 5. Choice of target — when to use `--target`
+
+GSET decides the target from the **file extension**, unless you pass `--target`:
+
+| Input file | Implied target | Override example |
+|------------|----------------|------------------|
+| `hello.gset` | Go (the default IR) | `gset run hello.gset --target python` |
+| `hello.py` | Python | `gset run hello.py --target go` |
+| `hello.js` | JavaScript | — |
+| `hello.java` | Java | — |
+| `hello.rb` | Ruby | — |
+| `hello.go` | Go | — |
+
+So the file extension does **not** force the output language — it only picks the *default*. `--target` always wins.
+
+## 6. A slightly bigger program
+
+Count down from a variable, plus a loop and a string concatenation:
+
+```gset
+var name = "World"
+var count = 3
+print("Hello, " + name)
+while count > 0 {
+    print(count)
+    count = count - 1
+}
+```
+
+```bash
+$ gset run hello.gset --target python
+Hello, World
+3
+2
+1
+
+$ gset run hello.gset --target javascript
+Hello, World
+3
+2
+1
+```
+
+The same program runs unchanged on **go, python, javascript, java**, and **ruby** targets. See [Portability](/core-concepts/portability/).
+
+## What if something fails?
+
+- **Parse error** → GSET prints the offending lines before running anything.
+- **Transpile error** → you asked for a target that has no emitter (`--target c`).
+- **Execution error** → the target toolchain (e.g. Python) rejected the generated code, or the runtime isn't installed.
+
+Diagnosing these is covered in [Errors](/reference/errors/).
+
+## Next steps
+
+- [The language](/language/overview/)
+- [Targets and their quirks](/targets/overview/)
+- [How GSET works under the hood](/core-concepts/how-it-works/)

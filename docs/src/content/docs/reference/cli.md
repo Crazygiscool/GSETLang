@@ -1,76 +1,86 @@
 ---
 title: CLI Reference
-description: Complete reference for GSET command line interface.
+description: gset run, gset transpile, flags, targets, and exit codes.
 ---
 
-## Commands
-
-### `gset run`
-
-Transpile and execute a GSET file.
-
-```bash
-gset run <file> [options]
+```
+USAGE
+  gset run <file> [--target <lang>] [--keep]
+  gset transpile <file> [--target <lang>] [-o outfile]
+  gset version
+  gset help
 ```
 
-**Options:**
+## gset run
 
-| Option | Description |
-|--------|-------------|
-| `-c, --compiler` | Specify target compiler |
-| `-t, --timeout` | Set execution timeout (seconds) |
-| `-v, --verbose` | Enable verbose output |
+Transpile and execute in one step.
 
-**Examples:**
-
-```bash
-gset run hello.gset
-gset run script.gset -c python
-gset run app.gset -t 60 -v
+```
+gset run <file> [--target <lang>] [--keep]
 ```
 
-### `gset version`
+| Flag | Meaning |
+|------|---------|
+| `--target <lang>` | Force target: `go`, `python`, `js`/`javascript`, `java`, `ruby`. Default from file extension (`.gset`→go). |
+| `--keep` | Keep generated temp files (`/tmp/gset_<base>.<ext>`, `Main.java`, `Main.class`). |
 
-Display version information.
+Execution:
 
-```bash
-gset version
+1. Target resolved (extension default, overridden by `--target`).
+2. Source transpiled; **10 MB cap** on output.
+3. Output written to `/tmp/gset_<base>.<ext>` (or `Main.java` for java).
+4. Target compiler invoked (`python3`, `node`, `go run`, java pipeline, `ruby`).
+5. Temp files unlinked unless `--keep`.
+
+## gset transpile
+
+Print generated source (1 line per statement) or save it.
+
+```
+gset transpile <file> [--target <lang>] [-o outfile]
 ```
 
-Output: `GSET v2.0.2`
+| Flag | Meaning |
+|------|---------|
+| `--target <lang>` | Force target (same set). |
+| `-o outfile` | Write to a file instead of stdout. |
 
-### `gset help`
+## Targets
 
-Show help message.
+| Argument | Extension |
+|----------|-----------|
+| `python` | `.py` |
+| `javascript`, `js` | `.js` |
+| `go` | `.go` |
+| `java` | `.java` |
+| `ruby` | `.rb` |
 
-```bash
-gset help
-```
+Unknown `--target` values are rejected before parsing.
 
-## Exit Codes
+## Environment & config
+
+| Variable / file | Effect |
+|-----------------|--------|
+| `GSET_DEBUG=1` | Debug logging to stderr |
+| `gset.conf` (CWD) | Keyword aliases + compiler overrides |
+| `$HOME/.gset.conf`, `/etc/gset.conf` | Fallback config |
+
+## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
-| 1 | General error |
-| 2 | File not found |
-| 3 | Compilation error |
-| 4 | Runtime error |
-| 5 | Timeout |
+| 0 | success |
+| 1 | parse errors, transpile errors, or target-compiler/run failure |
+| 124/137 | killed by timeout/`OOM` (only if you wrapped GSET) |
 
-## Environment Variables
+## Example session
 
-| Variable | Description |
-|----------|-------------|
-| `GSET_CONFIG` | Path to config file |
-| `GSET_DEFAULT_COMPILER` | Default compiler |
-| `GSET_VERBOSE` | Enable verbose mode |
-| `GSET_TIMEOUT` | Default timeout |
-
-## Configuration File
-
-GSET looks for `gset.conf` in:
-1. Current directory
-2. `./config/`
-3. `$HOME/.gset/`
-4. `/etc/gset/`
+```bash
+$ gset transpile hello.gset
+package main
+...
+$ gset transpile hello.gset --target python -o hello.py
+$ gset run hello.gset --target javascript
+Hello, GSET!
+$ gset run hello.gset --target java --keep    # leaves Main.java + Main.class
+```

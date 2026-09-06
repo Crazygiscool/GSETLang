@@ -1,62 +1,59 @@
 ---
-title: How It Works
-description: Understanding GSET's architecture and how it transpiles code.
+title: How GSET Works
+description: The pipeline from source to zero dependency binary to five runtimes.
 ---
 
-GSET uses a classic compiler architecture with three main stages:
+GSET is a **compiler** in the classic sense — it reads source, builds an AST, and writes target source. There is no virtual machine and no interpreter loop.
 
-## 1. Lexing (Tokenization)
+## The pipeline
 
-The lexer reads your source code and breaks it into tokens - the smallest meaningful units:
-
-- Keywords (`if`, `else`, `while`)
-- Identifiers (`variableName`, `functionName`)
-- Operators (`+`, `-`, `=`, `==`)
-- Literals (`42`, `"hello"`, `true`)
-- Punctuation (`{`, `}`, `(`, `)`, `;`)
-
-## 2. Parsing (AST Generation)
-
-The parser takes the token stream and builds an Abstract Syntax Tree (AST). The AST represents the hierarchical structure of your program:
-
-```
-Program
-└── CallExpression (main)
-    └── BlockStatement
-        └── ExpressionStatement
-            └── CallExpression (print)
-                └── StringLiteral ("Hello")
+```text
+your.gset
+   │   [lexer]
+   ▼
+ tokens ──► [parser] ──► AST (ast/ast.go)
+   │
+   ▼
+[transpiler] ──► target source (complete runnable file: wrapper + code)
+   │
+   ├── gset transpile  →  stdout or -o file.gsx
+   └── gset run        →  /tmp/gset_<base>.<ext>  →  python3/node/go/java/ruby
 ```
 
-## 3. Transpilation & Execution
+1. **Lexer** — `lexer/lexer.go`. Converts the file into a token stream. Identifiers, numbers, strings, and punctuation: `VAR`, `IDENT`, `LT`, `LBRACE`, `NEWLINE` etc.
+2. **Parser** — `parser/parser.go`. A hand-written Pratt/recursive-descent parser producing an AST whose node types live in `ast/ast.go`: `Program`, `VariableStatement`, `IfStatement`, `WhileStatement`, `FunctionStatement`, `ArrayLiteral`, `MapLiteral`, `InfixExpression`, `IndexExpression`, …
+3. **Transpiler** — `transpiler/transpiler.go` + `transpiler/emit.go`. Walks the AST five times (once per target) and emits a **complete** file with correct wrapper and imports.
 
-The transpiler walks the AST and:
-1. Translates syntax keywords based on your configuration
-2. Converts to the target language's structure
-3. Executes using the appropriate runtime
+## Per-target emitters
 
-## Keyword Mapping
+`transpiler/emit.go` holds a big switch that maps each AST node to target text:
 
-The key feature is keyword translation. In your `gset.conf`:
+| Case | What it does |
+|------|--------------|
+| `go` | `package main`, `import "fmt"`, `func main()`, `while`→`for`, `foreach`→`range`, `[]interface{}` |
+| `python` | `print`, `if/elif/else:` indentation blocks, `and`/`or`/`not`, `except` |
+| `javascript` | `let`, `console.log`, `switch`, `arrow` lambdas, `Math.pow` |
+| `java` | `public class Main`, `System.out.println`, `;` suffixing, `var x` |
+| `ruby` | `puts`, `begin/rescue/ensure`, `end`-blocks |
 
-```ini
-[keywords]
-# Map source keywords to target keywords
-def = func
-print = fmt.Println
-```
+The **write path** (`Executor` in `transpiler/transpiler.go`) builds `/tmp/gset_<base>.<ext>` (or writes `Main.java` for java) and shells out to the per-extension compiler from `GetCompilers()`.
 
-This allows you to write in one syntax while targeting another.
+## Configuration flow
 
-## File Extension Detection
+`config.LoadConfig` (in `config/config.go`) reads `gset.conf` → `$HOME/.gset.conf` → `/etc/gset.conf`. It produces:
 
-GSET uses file extensions to determine the source and target languages:
+- the **keyword map** (applies print aliases per target), fed into every emitter so `say` becomes `print`/`console.log`/`fmt.Println`;
+- the **compiler overrides** (`compiler.<lang>.command`, `.args`, `.wrapper`, `.run`), merged over `GetCompilers()` defaults in `NewExecutor`.
 
-| Extension | Language |
-|-----------|----------|
-| `.py` | Python |
-| `.js` | JavaScript |
-| `.go` | Go |
-| `.java` | Java |
-| `.rb` | Ruby |
-| `.gset` | Auto-detect from config |
+## Safety rails (verified)
+
+- The parser has **starvation guards** — a stale-token loop records a parse error and advances instead of spinning. `match/case`, `try/catch`, list comprehensions, and stray `export`-blocks all terminate.
+- `run` executes under a **10 MB size cap** on generated output.
+- Generated temp files are unlinked after execution unless `--keep` is passed.
+- Java runs inside a configured `sh -c` pipeline that removes `Main.class` afterward.
+
+## Where GSET diverges from a compiler
+
+It does **not** type-check. Type annotations are honored by Go/Java emitters but GSET itself has no semantic analysis yet — a genuinely "wrong-types" program is caught by the target compiler, not by GSET.
+
+Next: [Configuration](/core-concepts/configuration/).

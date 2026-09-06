@@ -1,46 +1,58 @@
 ---
 title: Introduction
-description: Learn what GSET is and how it can help you write code in any language syntax.
+description: What GSET is, what it can actually do today, and what is planned.
 ---
 
-GSET (Generic Syntax Extension Tool) v2.0.2 is a transpiler that bridges the gap between programming languages. It allows you to write code using the syntax and patterns of one programming language, then compile and run it using the runtime of another language.
+<span class="badge implemented">Implemented</span>
 
-## Why GSET?
+GSET (**Generic Syntax Extension Tool**) is a single-binary Go transpiler. It reads a `.gset` source file, parses it into an abstract syntax tree, and emits a complete, runnable file for one of five targets: **Python, JavaScript, Go, Java, and Ruby**.
 
-Programming languages each have their own strengths:
+Version: **2.2.0**. License: CC BY-NC 4.0.
 
-- **Python**: Clean, readable syntax with powerful libraries
-- **JavaScript**: Ubiquitous for web development
-- **Go**: Excellent concurrency support and fast compilation
-- **Java**: Mature ecosystem and cross-platform support
+## What GSET actually does
 
-GSET lets you pick the syntax you prefer while targeting the runtime that best fits your needs.
+1. **Lexes** your source into tokens (`lexer/lexer.go`).
+2. **Parses** tokens into an AST (`parser/parser.go`, nodes in `ast/ast.go`).
+3. **Emits** a complete file for your chosen target (`transpiler/transpiler.go`, per-target backends in `transpiler/emit.go`).
+4. **Runs** the output with the target's toolchain — `python3`, `node`, `go run`, `java`, or `ruby` — or just prints it with `gset transpile`.
 
-## How It Works
+There is no VM. The output is real source code in the target language, executed by the target's own runtime.
 
-GSET uses a two-step process:
+## What GSET is not
 
-1. **Parse**: Read your source code and build an Abstract Syntax Tree (AST)
-2. **Transpile**: Convert the AST to your target language and execute
+- It is **not** a compiler that turns GSET into a low-level language. Go is the default *intermediate representation*, and even there the shared subset is narrow (untyped assignments do not compile under `go run`).
+- It is **not** a universal "write Python, run Java" tool. It is a **small common-subset** language with per-target backends. Each construct transpiles best to the targets where it is native.
+- It is **not** a magic config that adds new languages. Adding a language requires writing a new emitter.
 
-The configuration file (`gset.conf`) controls keyword mappings between languages.
+## Where the idea came from
 
-## Features
+The original vision was broader: "any-language syntax, mapped via config, executed anywhere." The repo's `gset.conf` still carries keyword sections for C, C++, C#, Rust, PHP, and others. Today's reality is more focused — five emitters, config-driven keyword aliases, and the Go IR as the default. Pages in this guide carry an **Implemented** or **Planned** badge so you always know which part of the original vision is real.
 
-### Core Features
-- **Multi-language support**: Python, JavaScript, Go, Java, Ruby, PHP, and more
-- **Keyword mapping**: Define custom translations between language keywords
-- **External configuration**: All settings in `gset.conf`, no hardcoding
-- **Cross-platform**: Works on Linux, macOS, and Windows
-- **Open source**: Licensed under CC BY-NC 4.0
+## Core features
 
-### Language Constructs
-- **Variables**: `var`, `val`, `let`, `const` declarations
-- **Arrays**: `[1, 2, 3]` with list comprehensions
-- **Control Flow**: `if/else`, `match`, `switch`
-- **Loops**: `for`, `while`, `do-while`, `foreach`
-- **Functions**: `function`, `fn`, `def`, lambda expressions
-- **Error Handling**: `try/catch/finally`, `throw`
-- **Classes**: `class`, `extends`, `implements`
-- **Async**: `async`, `await`, `yield`
-- **Type Annotations**: Optional type declarations
+### Implemented
+- Five working code generators: go, python, javascript, java, ruby
+- `gset run <file> [--target <lang>] [--keep]` — transpile and execute
+- `gset transpile <file> [--target <lang>] [-o outfile]` — print or save one target's output
+- Variables (`var`, `val`, `let`, `const`), arrays, maps, index access, foreach
+- `if/elif/else`, `while`, `do-while`, `for`, `for … in`
+- `function`/`fn`/`def` functions with `return`
+- `try/catch/finally`, `throw`/`raise`
+- `match`/`case`/`default` (and `switch`)
+- List comprehensions `[x * x for x in items]`
+- Global and per-extension keyword aliases from `gset.conf` (`say`, `shout`, `echo`, …)
+- `gset run hello.gset` works out of the box (`.gset` defaults to the Go target with a proper wrapper)
+
+### Planned
+- More targets (C, C++, C#, Rust, PHP, Swift, Kotlin, TypeScript backends already have config stubs)
+- Real type inference so Go/Java output compiles for typed code
+- Classes for the Go target and richer class support everywhere
+- File-header `key=value` keyword blocks
+- A proper semantic analyzer (scope/type checking)
+
+## Next steps
+
+- [Install GSET](/getting-started/installation/)
+- [Quick Start](/getting-started/quick-start/)
+- [The language](/language/overview/)
+- [Per-target behavior](/targets/overview/)

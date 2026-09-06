@@ -1,73 +1,67 @@
 ---
 title: Installation
-description: How to install GSET on your system.
+description: Install GSET from source, a release binary, or a package.
 ---
 
-## Pre-built Binaries
+GSET is version **2.2.0**. It has **zero external dependencies** — one static Go binary.
 
-Download the latest release from the [GitHub Releases](https://github.com/Crazygiscool/GSETLang/releases) page.
+## Requirements
 
-### Linux
+- To **build** from source: Go 1.21+
+- To **run** GSET output, install whichever target runtime you want to use:
+  `python3`, `node`, `go`, `java` (+ `javac`), or `ruby`
 
-```bash
-# Download the binary
-wget https://github.com/Crazygiscool/GSETLang/releases/download/v2.0.2/gset-linux-amd64
+## One-liner install script
 
-# Make it executable
-chmod +x gset-linux-amd64
-
-# Move to your PATH
-sudo mv gset-linux-amd64 /usr/local/bin/gset
-```
-
-### macOS
+The project ships an installer script that fetches a prebuilt binary:
 
 ```bash
-# Download and unzip
-unzip GSET-2.0.2-macOS.zip
-
-# Make it executable
-chmod +x gset-darwin-amd64
-
-# Move to your PATH
-sudo mv gset-darwin-amd64 /usr/local/bin/gset
+curl -fsSL https://raw.githubusercontent.com/Crazygiscool/GSETLang/main/install.sh | bash
 ```
 
-### Windows
+## Pre-built binaries
 
-Download `gset-windows-amd64.exe` from the releases page and add it to your PATH.
-
-## Package Managers
-
-### Arch Linux (AUR)
+Download the latest release from the [GitHub Releases](https://github.com/Crazygiscool/GSETLang/releases) page. Releases are cross-compiled for Linux, macOS, and Windows (amd64/arm64) into `dist/` by `scripts/build.sh`.
 
 ```bash
-# Using yay or paru
-yay -S gset
+# Linux example, after downloading the archive
+tar -xzf gset-2.2.0-linux-amd64.tar.gz
+sudo mv gset /usr/local/bin/gset
 ```
 
-### APT (Debian/Ubuntu)
-
-Download the `.deb` package from releases and install:
-
-```bash
-sudo dpkg -i gset_2.0.2_amd64.deb
-```
-
-## Build from Source
-
-Requirements: Go 1.21+
+## Build from source
 
 ```bash
 git clone https://github.com/Crazygiscool/GSETLang.git
 cd GSETLang
-go build -o gset
+go build -o gset .
 ```
 
-## Verify Installation
+The build emits a `gset` binary in the repo root. To also copy it into `test/`, use `make build` (this produces `gset-2.2.0`).
+
+## Package managers
+
+| Package | Install |
+|---------|---------|
+| Arch Linux (AUR) | `yay -S gset` |
+| Debian/Ubuntu | `sudo dpkg -i gset_2.2.0_amd64.deb` (from releases) |
+| Windows | `winget install GSETLang` / `choco install gset` (see `plugins/packages/`) |
+
+## Verify the install
 
 ```bash
 gset version
+# GSET v2.2.0
 ```
 
-You should see: `GSET v2.0.2`
+## What you'll need at runtime
+
+| Target | Command GSET shells out to |
+|--------|---------------------------|
+| Python | `python3` |
+| JavaScript | `node` |
+| Go | `go run` |
+| Java | `sh -c 'javac Main.java && java Main'` (configurable) |
+| Ruby | `ruby` |
+
+You can override any of these commands in [`gset.conf`](/core-concepts/configuration/). If a toolchain is missing, `gset run` fails with a clear execution error — install the runtime and try again.

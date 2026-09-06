@@ -618,6 +618,45 @@ tr:hover td {
 .lang-badge.php { background: #777bb4; }
 
 /* ================================
+   IMPLEMENTED / PLANNED BADGES
+   ================================ */
+.badge {
+	display: inline-block;
+	padding: 0.14rem 0.5rem;
+	border-radius: 999px;
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	vertical-align: middle;
+	line-height: 1.4;
+}
+
+.badge.implemented {
+	background: rgba(34, 197, 94, 0.15);
+	color: #22c55e;
+	border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.badge.planned {
+	background: rgba(234, 179, 8, 0.15);
+	color: #eab308;
+	border: 1px solid rgba(234, 179, 8, 0.35);
+}
+
+:root[data-theme='light'] .badge.implemented {
+	background: rgba(21, 128, 61, 0.12);
+	color: #15803d;
+	border-color: rgba(21, 128, 61, 0.3);
+}
+
+:root[data-theme='light'] .badge.planned {
+	background: rgba(161, 98, 7, 0.12);
+	color: #a16207;
+	border-color: rgba(161, 98, 7, 0.3);
+}
+
+/* ================================
    SCROLLBAR
    ================================ */
 ::-webkit-scrollbar {

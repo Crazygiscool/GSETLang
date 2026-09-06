@@ -1,84 +1,74 @@
 ---
 title: Configuration
-description: Complete guide to gset.conf settings.
+description: gset.conf — keyword aliases, compiler overrides, and run pipelines.
 ---
 
-GSET uses `gset.conf` for all configuration. It should be in your project directory or home folder.
+GSET reads configuration from three locations, first match wins:
 
-## File Format
+1. `./gset.conf` in the current working directory
+2. `$HOME/.gset.conf`
+3. `/etc/gset.conf`
 
-GSET uses INI-style configuration:
+The file is a flat `key=value` list. Comments start with `#`.
 
-```ini
-[section]
-key = value
+## Keyword aliases
+
+Control the *spelling* of `print` per target:
+
+```conf
+# global keywords
+keywords.print=say
+
+# per-target overrides
+ext.py.keywords.print=puts
+ext.js.keywords.print=log
 ```
 
-## Full Example
+With `keywords.print=say`, `say "hi"` in your source transpiles to `print("hi")` (Python), `console.log("hi")` (JavaScript), `fmt.Println("hi")` (Go).
 
-```ini
-[compiler]
-default = python
-verbose = false
+> **Verified:** keyword aliases are applied by **both** `gset run` and `gset transpile` — the keyword map feeds every emitter. `say`/`shout` work.
 
-[python]
-command = python3
-extension = .py
-timeout = 30
+## Compiler overrides
 
-[node]
-command = node
-extension = .js
-timeout = 30
+Change how each target runs. Each compiler block has four keys:
 
-[java]
-command = java
-extension = .java
-timeout = 60
+```conf
+compiler.python.command=python3
+compiler.python.args=-u
+compiler.python.wrapper=
 
-[go]
-command = go run
-extension = .go
-timeout = 60
-
-[keywords.py.go]
-def = func
-print = fmt.Println
-True = true
-False = false
-None = nil
-
-[keywords.py.java]
-print = System.out.println
+compiler.java.command=javac
+compiler.java.args=Main.java
+compiler.java.run=javac Main.java && java Main && rm Main.class
+compiler.java.wrapper=
 ```
 
-## Compiler Section
+Precedence:
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `default` | `python` | Default compiler to use |
-| `verbose` | `false` | Enable verbose output |
+| Setting | Meaning | Default |
+|---------|---------|---------|
+| `compiler.<lang>.command` | executable | `GetCompilers()` defaults (`python3`, `node`, `go`, `javac`, `ruby`) |
+| `compiler.<lang>.args` | static args | target-specific |
+| `compiler.<lang>.run` | full shell pipeline | set only for Java |
+| `compiler.<lang>.wrapper` | extra wrapper lines | empty |
 
-## Language Sections
+If `command` is empty in config, the built-in default is retained (merging, not replacing).
 
-Each language section (`[python]`, `[node]`, `[java]`, etc.) supports:
+## The gset.conf included with the repo
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `command` | - | Command to execute |
-| `extension` | - | File extension for output |
-| `timeout` | `30` | Execution timeout in seconds |
+The shipped `gset.conf` registers print aliases (`say`, `println`, `print`, `shout`, `log`, `echo`, `puts`) for `.py`, `.js`, `.java`, `.go`, `.rb` and lists keyword sections for future targets.
 
-## Keywords Section
+## CWD dependence
 
-Format: `[keywords.<source>.<target>]`
+Because `gset.conf` is resolved from the **current working directory**, running `gset` from a different directory changes keywords and compilers. Verify your config is in effect:
 
-Define keyword translations from source to target language.
+```bash
+ls gset.conf        # your config present?
+gset transpile hello.gset --target js | head -3
+```
 
-## Environment Variables
+If `say` stops mapping, you're likely not in the directory holding `gset.conf`.
 
-GSET also reads from environment variables:
+## File-header keywords (parsed, not yet applied)
 
-- `GSET_CONFIG` - Path to custom config file
-- `GSET_DEFAULT_COMPILER` - Override default compiler
-- `GSET_VERBOSE` - Enable verbose mode
+A leading `key=value` block inside a `.gset` file (e.g. a custom `print=` mapping in the file header) is parsed by `config/config.go`, but **not yet applied** to transpilation — the header is a planned feature. Set aliases via `gset.conf` for now.

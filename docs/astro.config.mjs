@@ -20,7 +20,7 @@ export default defineConfig({
 		}),
 		starlight({
 			title: 'GSET - Generic Syntax Extension Tool',
-			description: 'Write in any language syntax, compile to any language',
+			description: 'One source. Every runtime. Write once in GSET, transpile to Python, JavaScript, Go, Java, or Ruby.',
 			logo: {
 				src: './src/assets/gset-logo.svg',
 			},
@@ -46,28 +46,62 @@ export default defineConfig({
 					],
 				},
 				{
-					label: 'Core Concepts',
+					label: 'Language Guide',
 					items: [
-						{ label: 'How It Works', slug: 'core-concepts/how-it-works' },
-						{ label: 'Keyword Mapping', slug: 'core-concepts/keyword-mapping' },
-						{ label: 'Configuration', slug: 'core-concepts/configuration' },
+						{ label: 'Overview', slug: 'language/overview' },
+						{ label: 'Variables', slug: 'language/variables' },
+						{ label: 'Operators', slug: 'language/operators' },
+						{ label: 'Arrays & Maps', slug: 'language/arrays-maps' },
+						{ label: 'Control Flow', slug: 'language/control-flow' },
+						{ label: 'Loops', slug: 'language/loops' },
+						{ label: 'Functions', slug: 'language/functions' },
+						{ label: 'Classes', slug: 'language/classes' },
+						{ label: 'Error Handling', slug: 'language/error-handling' },
+						{ label: 'Modules', slug: 'language/modules' },
 					],
 				},
 				{
-					label: 'Language Support',
-					autogenerate: { directory: 'languages' },
+					label: 'Targets',
+					items: [
+						{ label: 'Overview', slug: 'targets/overview' },
+						{ label: 'Python', slug: 'targets/python' },
+						{ label: 'JavaScript', slug: 'targets/javascript' },
+						{ label: 'Go', slug: 'targets/go' },
+						{ label: 'Java', slug: 'targets/java' },
+						{ label: 'Ruby', slug: 'targets/ruby' },
+						{ label: 'Planned', slug: 'targets/planned' },
+					],
 				},
 				{
-					label: 'Examples',
+					label: 'Core Concepts',
 					items: [
-						{ label: 'Basic Usage', slug: 'examples/basic-usage' },
-						{ label: 'Custom Keywords', slug: 'examples/custom-keywords' },
-						{ label: 'Multiple Languages', slug: 'examples/multiple-languages' },
+						{ label: 'How It Works', slug: 'core-concepts/how-it-works' },
+						{ label: 'Configuration', slug: 'core-concepts/configuration' },
+						{ label: 'Portability', slug: 'core-concepts/portability' },
 					],
 				},
 				{
 					label: 'Reference',
-					autogenerate: { directory: 'reference' },
+					items: [
+						{ label: 'CLI', slug: 'reference/cli' },
+						{ label: 'Errors', slug: 'reference/errors' },
+						{ label: 'Security', slug: 'security/security' },
+					],
+				},
+				{
+					label: 'Concepts',
+					items: [
+						{ label: 'Limitations', slug: 'concepts/limitations' },
+						{ label: 'GSET vs Other Tools', slug: 'concepts/gset-vs-x' },
+						{ label: 'Roadmap', slug: 'concepts/roadmap' },
+					],
+				},
+				{
+					label: 'Development',
+					items: [
+						{ label: 'Building', slug: 'development/building' },
+						{ label: 'Architecture', slug: 'development/architecture' },
+					],
 				},
 			],
 			customCss: ['./src/styles/custom.css', './src/styles/animations.css'],
