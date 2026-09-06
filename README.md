@@ -373,7 +373,7 @@ GSETLang/
 ├── security/           # Security utilities
 ├── logger/             # Logging package
 ├── test/                # Test files
-├── docs/               # Documentation
+├── GSETLang-Docs/       # Docs site submodule (live site)
 └── packages/          # Distribution packages
 ```
 
