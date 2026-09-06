@@ -127,8 +127,15 @@ install_to() {
     
     if [ "$OS" = "windows" ]; then
         unzip -o "${ARCHIVE_NAME}" -d "$INSTALL_DIR" 2>/dev/null || tar -xzf "${ARCHIVE_NAME}" -C "$INSTALL_DIR" 2>/dev/null
+        if [ -f "${INSTALL_DIR}/gset-${OS}-${ARCH}.exe" ]; then
+            mv -f "${INSTALL_DIR}/gset-${OS}-${ARCH}.exe" "${INSTALL_DIR}/gset.exe"
+        fi
     else
         tar -xzf "${ARCHIVE_NAME}" -C "$INSTALL_DIR"
+        # Release archives name the binary gset-<os>-<arch>; normalize it to gset
+        if [ -f "${INSTALL_DIR}/gset-${OS}-${ARCH}" ]; then
+            mv -f "${INSTALL_DIR}/gset-${OS}-${ARCH}" "${INSTALL_DIR}/gset"
+        fi
     fi
     
     # Make executable
@@ -145,12 +152,17 @@ install_to() {
 add_to_path() {
     local INSTALL_DIR="$1"
     local SHELL_RC=""
+    local EXPORT_LINE="export PATH=\"${INSTALL_DIR}:\${PATH}\""
     
-    # Detect shell
-    if [ -n "$BASH_VERSION" ]; then
-        SHELL_RC="$HOME/.bashrc"
-    elif [ -n "$ZSH_VERSION" ]; then
+    # Detect shell config to update
+    if [ -n "$ZSH_VERSION" ]; then
         SHELL_RC="$HOME/.zshrc"
+    elif [ -n "$BASH_VERSION" ]; then
+        if [ "$(basename "${SHELL:-/bin/bash}")" = "zsh" ]; then
+            SHELL_RC="$HOME/.zshrc"
+        else
+            SHELL_RC="$HOME/.bashrc"
+        fi
     fi
     
     # Check if already in PATH
@@ -161,13 +173,19 @@ add_to_path() {
     
     # Add to shell config
     if [ -n "$SHELL_RC" ]; then
-        if ! grep -q "GSET" "$SHELL_RC" 2>/dev/null; then
+        if grep -Fq "$EXPORT_LINE" "$SHELL_RC" 2>/dev/null; then
+            info "GSET is already in ${SHELL_RC}"
+        else
             echo "" >> "$SHELL_RC"
             echo "# GSET" >> "$SHELL_RC"
-            echo "export PATH=\"\${HOME}/.local/bin:\${PATH}\"" >> "$SHELL_RC"
+            echo "$EXPORT_LINE" >> "$SHELL_RC"
             info "Added ${INSTALL_DIR} to PATH in ${SHELL_RC}"
             info "Restart your shell or run: source ${SHELL_RC}"
         fi
+    else
+        warn "${INSTALL_DIR} is not in your PATH"
+        echo "Add this line to your shell config (~/.bashrc, ~/.zshrc, etc):"
+        echo "  $EXPORT_LINE"
     fi
 }
 
@@ -188,14 +206,11 @@ main() {
     # Install
     install_to "$INSTALL_DIR"
     
-    # Check if in PATH
-    if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
-        warn "${INSTALL_DIR} is not in your PATH"
-        echo ""
-        echo "Add this to your shell config (~/.bashrc, ~/.zshrc, etc):"
-        echo "  export PATH=\"\${HOME}/.local/bin:\${PATH}\""
-        echo ""
-        echo "Then restart your shell or run: source ~/.bashrc"
+    # Add to PATH
+    add_to_path "$INSTALL_DIR"
+    
+    if [ -x "${INSTALL_DIR}/gset" ]; then
+        info "$("${INSTALL_DIR}/gset" version)"
     fi
     
     echo ""
