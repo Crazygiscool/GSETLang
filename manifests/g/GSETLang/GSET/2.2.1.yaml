@@ -1,8 +1,8 @@
-# Winget manifest for GSET v2.1.2
+# Winget manifest for GSET v2.2.1
 # Submit this to: https://github.com/microsoft/winget-pkgs
 
 PackageIdentifier: GSETLang.GSET
-PackageVersion: 2.1.2
+PackageVersion: 2.2.1
 PackageName: GSET
 Publisher: GSETLang
 Author: Crazygiscool
@@ -12,7 +12,7 @@ License: CC BY-NC 4.0
 LicenseUrl: https://github.com/Crazygiscool/GSETLang/blob/main/LICENSE
 ShortDescription: Universal language transpiler
 Installer:
-  InstallerUrl: https://github.com/Crazygiscool/GSETLang/releases/download/v2.1.2/gset-setup.exe
+  InstallerUrl: https://github.com/Crazygiscool/GSETLang/releases/download/v2.2.1/gset-setup.exe
   InstallerType: nsis
   InstallModes:
     - Interactive
@@ -36,7 +36,7 @@ Tags:
   - python
   - javascript
   - golang
-ReleaseNotesUrl: https://github.com/Crazygiscool/GSETLang/releases/tag/v2.1.2
+ReleaseNotesUrl: https://github.com/Crazygiscool/GSETLang/releases/tag/v2.2.1
 Documentations:
   - DocumentLabel: Documentation
     DocumentUrl: https://gsetlang.vercel.app

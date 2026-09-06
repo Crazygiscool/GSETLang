@@ -11,13 +11,13 @@ InstallDirRegKey HKLM "Software\GSET" "InstallDir"
 RequestExecutionLevel admin
 
 ; Version info
-VIProductVersion "2.1.3.0"
+VIProductVersion "2.2.1.0"
 VIAddVersionKey "ProductName" "GSET"
 VIAddVersionKey "CompanyName" "GSETLang"
 VIAddVersionKey "LegalCopyright" "Copyright 2024 GSETLang"
 VIAddVersionKey "FileDescription" "GSET Installer"
-VIAddVersionKey "FileVersion" "2.1.3"
-VIAddVersionKey "ProductVersion" "2.1.3"
+VIAddVersionKey "FileVersion" "2.2.1"
+VIAddVersionKey "ProductVersion" "2.2.1"
 
 ; Interface Settings
 !define MUI_ABORTWARNING
@@ -60,7 +60,7 @@ Section "Install"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET" "UninstallString" '"$INSTDIR\Uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET" "Publisher" "GSETLang"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET" "DisplayVersion" "2.1.3"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET" "DisplayVersion" "2.2.1"
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET" "NoModify" 1
     WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSET" "NoRepair" 1
 

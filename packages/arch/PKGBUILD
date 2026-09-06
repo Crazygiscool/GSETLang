@@ -1,5 +1,5 @@
 pkgname=gset
-pkgver=2.0.2
+pkgver=2.2.1
 pkgrel=1
 pkgdesc="GSET - Generic Syntax Extension Tool. Write in any syntax, compile to any language."
 arch=(x86_64 aarch64 armv7h)

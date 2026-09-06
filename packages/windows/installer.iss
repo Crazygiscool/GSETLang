@@ -1,5 +1,5 @@
 ; GSET Windows Installer Script
-; Version: 2.0.2
+; Version: 2.2.1
 ; License: CC BY-NC 4.0
 ; 
 ; To compile this installer:
@@ -9,7 +9,7 @@
 ; 4. Output: gset-setup.exe
 
 #define MyAppName "GSET"
-#define MyAppVersion "2.0.2"
+#define MyAppVersion "2.2.1"
 #define MyAppPublisher "GSET Team"
 #define MyAppURL "https://github.com/Crazygiscool/GSETLang"
 #define MyAppExeName "gset.exe"

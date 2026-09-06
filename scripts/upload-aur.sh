@@ -1,6 +1,6 @@
 #!/bin/bash
 # AUR Upload Script for GSET
-# Version: 2.0.2
+# Version: 2.2.1
 # License: CC BY-NC 4.0
 # Usage: ./scripts/upload-aur.sh [version]
 
@@ -9,7 +9,7 @@ set -e
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 AUR_DIR="$REPO_DIR/packages/aur"
 GITHUB_REPO="Crazygiscool/GSETLang"
-VERSION=${1:-"2.0.2"}
+VERSION=${1:-"2.2.1"}
 
 echo "=== GSET AUR Upload Script ==="
 echo "Version: $VERSION"
@@ -31,7 +31,7 @@ fi
 
 # Build binary
 echo "[1/5] Building binary..."
-CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$VERSION" -o gset .
+CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=$VERSION" -o gset .
 
 # Create distribution directory
 echo "[2/5] Preparing distribution..."

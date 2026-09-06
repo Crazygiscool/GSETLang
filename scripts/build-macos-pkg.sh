@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build macOS PKG Installer for GSET
-# Version: 2.0.2
+# Version: 2.2.1
 # License: CC BY-NC 4.0
 #
 # This script creates a macOS PKG installer using the `packages` tool
@@ -14,10 +14,10 @@
 #   ./build-macos-pkg.sh
 #
 # Output:
-#   dist/GSET-2.0.2.pkg
+#   dist/GSET-2.2.1.pkg
 
 set -e
-VERSION="2.0.2"
+VERSION="2.2.1"
 BUILD_DIR="./dist"
 PKG_NAME="GSET-${VERSION}"
 
@@ -43,7 +43,7 @@ if [[ "$(uname)" != "Darwin" ]]; then
     
     # Build the binary for darwin
     echo "[1/3] Building binary for macOS..."
-    GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$VERSION" -o "$BUILD_DIR/gset" .
+    GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=$VERSION" -o "$BUILD_DIR/gset" .
     
     # Create app bundle
     echo "[2/3] Creating app bundle..."
@@ -58,7 +58,7 @@ if [[ "$(uname)" != "Darwin" ]]; then
 <dict>
     <key>CFBundleName</key><string>GSET</string>
     <key>CFBundleIdentifier</key><string>com.gset.lang</string>
-    <key>CFBundleVersion</key><string>2.0.2</string>
+    <key>CFBundleVersion</key><string>2.2.1</string>
     <key>CFBundleExecutable</key><string>GSET</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleSignature</key><string>????</string>
@@ -91,7 +91,7 @@ fi
 
 # We're on macOS - try to build PKG
 echo "[1/3] Building binary for macOS..."
-GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$VERSION" -o "$BUILD_DIR/gset" .
+GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=$VERSION" -o "$BUILD_DIR/gset" .
 
 echo "[2/3] Checking for Packages tool..."
 if command -v packages &> /dev/null; then

@@ -16,7 +16,7 @@
 
 ## What is GSET?
 
-GSET (Generic Syntax Extension Tool) v2.1.3 is a transpiler that allows you to write code using any language's syntax (Python, JavaScript, Java, Go, etc.) and compile it to run on any target language's runtime.
+GSET (Generic Syntax Extension Tool) v2.2.1 is a transpiler that allows you to write code using any language's syntax (Python, JavaScript, Java, Go, etc.) and compile it to run on any target language's runtime.
 
 **Write this:**
 ```gset
@@ -457,6 +457,6 @@ See [LICENSE](LICENSE) for full text.
 
 <div align="center">
 
-**Version:** 2.1.3 | **License:** CC BY-NC 4.0 | **Copyright:** 2024-2026 GSET Team
+**Version:** 2.2.1 | **License:** CC BY-NC 4.0 | **Copyright:** 2024-2026 GSET Team
 
 </div>

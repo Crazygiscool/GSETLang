@@ -1,12 +1,12 @@
 #!/bin/bash
 # APT Repository Upload Script
-# Version: 2.0.2
+# Version: 2.2.1
 # License: CC BY-NC 4.0
 # Usage: ./scripts/upload-apt.sh [version]
 
 set -e
 
-VERSION=${1:-"2.0.2"}
+VERSION=${1:-"2.2.1"}
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DEBIAN_DIR="$REPO_DIR/packages/debian"
 GITHUB_REPO="Crazygiscool/GSETLang"
@@ -26,7 +26,7 @@ done
 # Build binary
 echo "[1/6] Building binary..."
 cd "$REPO_DIR"
-CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$VERSION" -o gset .
+CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=$VERSION" -o gset .
 
 # Create package directory structure
 echo "[2/6] Creating package structure..."

@@ -29,7 +29,7 @@ yay --sudoloop -Syu gset-git
 5. Commit and push:
    cd gset-git
    git add .
-   git commit -m "GSET v2.0.2 - CC BY-NC 4.0"
+   git commit -m "GSET v2.2.1 - CC BY-NC 4.0"
    git push origin master
 
 ## To test locally first:

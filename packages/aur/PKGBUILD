@@ -2,7 +2,7 @@
 # Upload this to AUR: https://aur.archlinux.org/packages/gset/
 
 pkgname=gset-git
-pkgver=2.0.2
+pkgver=2.2.1
 pkgrel=1
 pkgdesc="GSET - Generic Syntax Extension Tool. Write in any language syntax, compile to any language."
 arch=(x86_64 aarch64)
@@ -17,12 +17,12 @@ md5sums=("SKIP")
 
 pkgver() {
     cd "$srcdir/gset"
-    git describe --tags --abbrev=0 2>/dev/null || echo "2.0.2"
+    git describe --tags --abbrev=0 2>/dev/null || echo "2.2.1"
 }
 
 build() {
     cd "$srcdir/gset"
-    CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=$pkgver" -o gset .
+    CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=$pkgver" -o gset .
 }
 
 package() {

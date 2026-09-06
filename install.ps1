@@ -34,7 +34,7 @@ try {
     Write-Info "Latest version: $Version"
 } catch {
     Write-Warn "Could not check for latest version, using default"
-    $Version = "2.1.2"
+    $Version = "2.2.1"
 }
 
 # Detect architecture
