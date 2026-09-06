@@ -71,6 +71,7 @@ func (p *Parser) ParseProgram() *ast.Program {
 			p.addError("too many statements in program")
 			break
 		}
+		before := p.curTok
 		if p.curTok.Type == "IMPORT" {
 			if imp := p.parseImportStatement(); imp != nil {
 				p.prog.Imports = append(p.prog.Imports, imp)
@@ -87,8 +88,16 @@ func (p *Parser) ParseProgram() *ast.Program {
 				p.nextToken()
 			}
 		}
+		if sameToken(before, p.curTok) && p.curTok.Type != "EOF" {
+			p.addError("line %d, col %d: parser could not advance past unexpected %s %q", before.Line, before.Column, before.Type, before.Literal)
+			p.nextToken()
+		}
 	}
 	return p.prog
+}
+
+func sameToken(a, b ast.Token) bool {
+	return a.Type == b.Type && a.Literal == b.Literal && a.Line == b.Line && a.Column == b.Column
 }
 
 func (p *Parser) parseStatement() ast.Statement {
@@ -253,12 +262,11 @@ func (p *Parser) parseVariableStatement() ast.Statement {
 		return &ast.VariableStatement{Token: tok, Name: name, Type: typ, Value: &ast.NilLiteral{Token: tok}, Mut: isMut}
 	}
 
-	op := p.curTok.Literal
 	p.nextToken()
 
 	val := p.parseExpression()
 
-	return &ast.AssignmentStatement{Token: tok, Name: name, Operator: op, Value: val}
+	return &ast.VariableStatement{Token: tok, Name: name, Type: typ, Value: val, Mut: isMut}
 }
 
 // If Statement
@@ -298,12 +306,32 @@ func (p *Parser) parseMatchStatement() ast.Statement {
 
 	if p.curTok.Type != "LBRACE" {
 		p.peekError("LBRACE")
-		return nil
+		return &ast.MatchStatement{Token: tok, Subject: subject}
 	}
 	p.nextToken()
 
 	cases := []*ast.MatchCase{}
+	var defaultBody *ast.BlockStatement
+
 	for p.curTok.Type != "RBRACE" && p.curTok.Type != "EOF" {
+		for p.curTok.Type == "NEWLINE" || p.curTok.Type == "SEMICOLON" {
+			p.nextToken()
+		}
+		if p.curTok.Type == "RBRACE" || p.curTok.Type == "EOF" {
+			break
+		}
+
+		if p.curTok.Type == "CASE" || p.curTok.Type == "DEFAULT" {
+			p.nextToken()
+		}
+
+		// A default case has no pattern.
+		if p.curTok.Type == "COLON" || p.curTok.Type == "ARROW" || p.curTok.Type == "FAT_ARROW" {
+			p.nextToken()
+			defaultBody = p.parseMatchCaseBody()
+			continue
+		}
+
 		pattern := p.parseExpression()
 
 		var guard ast.Expression
@@ -312,11 +340,14 @@ func (p *Parser) parseMatchStatement() ast.Statement {
 			guard = p.parseExpression()
 		}
 
-		if p.curTok.Type == "ARROW" || p.curTok.Type == "FAT_ARROW" {
+		if p.curTok.Type == "COLON" || p.curTok.Type == "ARROW" || p.curTok.Type == "FAT_ARROW" {
 			p.nextToken()
 		}
 
-		body := p.parseBlock()
+		body := p.parseMatchCaseBody()
+		if body == nil {
+			body = &ast.BlockStatement{Token: p.curTok}
+		}
 		cases = append(cases, &ast.MatchCase{Pattern: pattern, Guard: guard, Consequence: body})
 
 		if p.curTok.Type == "COMMA" {
@@ -328,7 +359,48 @@ func (p *Parser) parseMatchStatement() ast.Statement {
 		p.nextToken()
 	}
 
-	return &ast.MatchStatement{Token: tok, Subject: subject, Cases: cases}
+	return &ast.MatchStatement{Token: tok, Subject: subject, Cases: cases, Default: defaultBody}
+}
+
+// parseMatchCaseBody parses a match case body. Case bodies are indentation
+// based (no surrounding braces): statements are consumed until the next
+// `case`/`default` keyword, the closing `}` or EOF. Braced bodies are also
+// supported via parseBlock.
+func (p *Parser) parseMatchCaseBody() *ast.BlockStatement {
+	for p.curTok.Type == "NEWLINE" || p.curTok.Type == "SEMICOLON" {
+		p.nextToken()
+	}
+	if p.curTok.Type == "LBRACE" {
+		block := p.parseBlock()
+		if p.curTok.Type == "RBRACE" {
+			p.nextToken()
+		}
+		return block
+	}
+
+	block := &ast.BlockStatement{Token: p.curTok, Statements: []ast.Statement{}}
+	for {
+		for p.curTok.Type == "NEWLINE" || p.curTok.Type == "SEMICOLON" {
+			p.nextToken()
+		}
+		if p.curTok.Type == "RBRACE" || p.curTok.Type == "EOF" ||
+			p.curTok.Type == "CASE" || p.curTok.Type == "DEFAULT" {
+			break
+		}
+		before := p.curTok
+		if stmt := p.parseStatement(); stmt != nil {
+			block.Statements = append(block.Statements, stmt)
+		}
+		if sameToken(before, p.curTok) {
+			p.addError("line %d, col %d: parser could not advance past unexpected %s %q", before.Line, before.Column, before.Type, before.Literal)
+			p.nextToken()
+		}
+		if len(block.Statements) > 1000 {
+			p.addError("too many statements in block")
+			break
+		}
+	}
+	return block
 }
 
 // For Statement
@@ -630,16 +702,25 @@ func (p *Parser) parseTryStatement() ast.Statement {
 	for p.curTok.Type == "CATCH" {
 		p.nextToken()
 
+		// Support both `catch e {` and `catch (e) {`.
+		if p.curTok.Type == "LPAREN" {
+			p.nextToken()
+		}
+
 		var variable *ast.Identifier
 		var catchType *ast.TypeExpression
 
-		if p.curTok.Type == "IDENT" && p.peekTok.Type != "LBRACE" {
+		if p.curTok.Type == "IDENT" {
 			variable = &ast.Identifier{Token: p.curTok, Value: p.curTok.Literal}
 			p.nextToken()
 			if p.curTok.Type == "COLON" {
 				p.nextToken()
 				catchType = p.parseTypeExpression()
 			}
+		}
+
+		if p.curTok.Type == "RPAREN" {
+			p.nextToken()
 		}
 
 		body := p.parseBlock()
@@ -711,8 +792,13 @@ func (p *Parser) parseBlock() *ast.BlockStatement {
 			p.addError("too many statements in block")
 			break
 		}
+		before := p.curTok
 		if stmt := p.parseStatement(); stmt != nil {
 			block.Statements = append(block.Statements, stmt)
+		}
+		if sameToken(before, p.curTok) {
+			p.addError("line %d, col %d: parser could not advance past unexpected %s %q", before.Line, before.Column, before.Type, before.Literal)
+			p.nextToken()
 		}
 		for p.curTok.Type == "NEWLINE" || p.curTok.Type == "SEMICOLON" {
 			p.nextToken()
@@ -974,11 +1060,20 @@ func (p *Parser) parsePostfix() ast.Expression {
 	expr := p.parsePrimary()
 
 	for p.curTok.Type == "PLUS_PLUS" || p.curTok.Type == "MINUS_MINUS" ||
-		p.curTok.Type == "QUESTION_DOT" || p.curTok.Type == "DOT" {
+		p.curTok.Type == "QUESTION_DOT" || p.curTok.Type == "DOT" ||
+		p.curTok.Type == "LBRACKET" {
 		if p.curTok.Type == "PLUS_PLUS" || p.curTok.Type == "MINUS_MINUS" {
 			op := p.curTok.Literal
 			p.nextToken()
 			expr = &ast.InfixExpression{Token: p.curTok, Left: expr, Operator: op, Right: &ast.IntegerLiteral{Token: p.curTok, Value: 1}}
+		} else if p.curTok.Type == "LBRACKET" {
+			// Postfix index access: nums[0], matrix[i][j]
+			p.nextToken()
+			idx := p.parseExpression()
+			if p.curTok.Type == "RBRACKET" {
+				p.nextToken()
+			}
+			expr = &ast.IndexExpression{Token: p.curTok, Left: expr, Index: idx}
 		} else if p.curTok.Type == "DOT" || p.curTok.Type == "QUESTION_DOT" {
 			_ = p.curTok.Type == "QUESTION_DOT"
 			p.nextToken()
@@ -1128,46 +1223,18 @@ func (p *Parser) parseCallArguments() []ast.Expression {
 
 func (p *Parser) parseArrayOrComprehension() ast.Expression {
 	p.nextToken()
-	elements := []ast.Expression{}
 
 	if p.curTok.Type == "RBRACKET" {
 		p.nextToken()
-		return &ast.ArrayLiteral{Token: p.curTok, Elements: elements}
+		return &ast.ArrayLiteral{Token: p.curTok, Elements: []ast.Expression{}}
 	}
 
+	// Python 3.9+ style `[for item in iterable ...]` starts directly with `for`.
 	if p.curTok.Type == "FOR" {
-		item := &ast.Identifier{Token: p.curTok, Value: "item"}
-		if ident, ok := elements[0].(*ast.Identifier); ok {
-			item = ident
-		}
-		p.nextToken()
-
-		if p.curTok.Type == "IDENT" {
-			item = &ast.Identifier{Token: p.curTok, Value: p.curTok.Literal}
-			p.nextToken()
-		}
-
-		if p.curTok.Type != "IN" {
-			p.peekError("IN")
-			return &ast.ArrayLiteral{Token: p.curTok, Elements: elements}
-		}
-		p.nextToken()
-
-		iterable := p.parseExpression()
-
-		var condition ast.Expression
-		if p.curTok.Type == "IF" {
-			p.nextToken()
-			condition = p.parseExpression()
-		}
-
-		if p.curTok.Type == "RBRACKET" {
-			p.nextToken()
-		}
-
-		return &ast.ListComprehension{Token: p.curTok, Element: item, Variable: item, Iterable: iterable, Condition: condition}
+		return p.parseComprehension(&ast.Identifier{Token: p.curTok, Value: "item"})
 	}
 
+	elements := []ast.Expression{}
 	for {
 		if p.curTok.Type == "RBRACKET" || p.curTok.Type == "EOF" || p.curTok.Type == "SEMICOLON" || p.curTok.Type == "NEWLINE" {
 			if p.curTok.Type == "RBRACKET" {
@@ -1175,13 +1242,81 @@ func (p *Parser) parseArrayOrComprehension() ast.Expression {
 			}
 			break
 		}
-		elements = append(elements, p.parseExpression())
+		before := p.curTok
+		element := p.parseExpression()
+		if sameToken(before, p.curTok) {
+			p.addError("line %d, col %d: parser could not advance past unexpected %s %q", before.Line, before.Column, before.Type, before.Literal)
+			break
+		}
+
+		// `[x * x for x in nums if cond]` - once the element is parsed, a `for`
+		// signals a list comprehension.
+		if p.curTok.Type == "FOR" {
+			p.nextToken()
+			item := &ast.Identifier{Token: p.curTok, Value: "item"}
+			if p.curTok.Type == "IDENT" {
+				item = &ast.Identifier{Token: p.curTok, Value: p.curTok.Literal}
+				p.nextToken()
+			}
+			lc := p.parseComprehensionBody(item, p.curTok)
+			if lc != nil {
+				lc.Element = element
+				return lc
+			}
+			elements = append(elements, element)
+			break
+		}
+
+		elements = append(elements, element)
 		if p.curTok.Type == "COMMA" {
 			p.nextToken()
+		}
+		if p.curTok.Type == "RBRACKET" || p.curTok.Type == "EOF" {
+			if p.curTok.Type == "RBRACKET" {
+				p.nextToken()
+			}
+			break
 		}
 	}
 
 	return &ast.ArrayLiteral{Token: p.curTok, Elements: elements}
+}
+
+// parseComprehension parses `[for item in iterable if cond ...]`.
+func (p *Parser) parseComprehension(element ast.Expression) ast.Expression {
+	p.nextToken()
+	item := &ast.Identifier{Token: p.curTok, Value: "item"}
+	if p.curTok.Type == "IDENT" {
+		item = &ast.Identifier{Token: p.curTok, Value: p.curTok.Literal}
+		p.nextToken()
+	}
+	lc := p.parseComprehensionBody(item, p.curTok)
+	if lc == nil {
+		return &ast.ArrayLiteral{Token: p.curTok, Elements: []ast.Expression{}}
+	}
+	lc.Element = element
+	return lc
+}
+
+// parseComprehensionBody parses `in iterable [if cond]` with the current
+// token already past the iteration variable. Returns nil if the `in` marker
+// is missing.
+func (p *Parser) parseComprehensionBody(item *ast.Identifier, afterVar ast.Token) *ast.ListComprehension {
+	if p.curTok.Type != "IN" {
+		p.peekError("IN")
+		return nil
+	}
+	p.nextToken()
+	iterable := p.parseExpression()
+	var condition ast.Expression
+	if p.curTok.Type == "IF" {
+		p.nextToken()
+		condition = p.parseExpression()
+	}
+	if p.curTok.Type == "RBRACKET" {
+		p.nextToken()
+	}
+	return &ast.ListComprehension{Token: afterVar, Element: item, Variable: item, Iterable: iterable, Condition: condition}
 }
 
 func (p *Parser) parseSetLiteral() ast.Expression {
@@ -1214,6 +1349,7 @@ func (p *Parser) parseMapLiteral() ast.Expression {
 	pairs := []*ast.MapPair{}
 
 	for p.curTok.Type != "RBRACE" && p.curTok.Type != "EOF" {
+		start := p.curTok
 		key := p.parseExpression()
 		if p.curTok.Type == "COLON" || p.curTok.Type == "ASSIGN" || p.curTok.Type == "COLON_ASSIGN" {
 			p.nextToken()
@@ -1221,6 +1357,10 @@ func (p *Parser) parseMapLiteral() ast.Expression {
 		val := p.parseExpression()
 		pairs = append(pairs, &ast.MapPair{Key: key, Value: val})
 		if p.curTok.Type == "COMMA" {
+			p.nextToken()
+		}
+		if sameToken(p.curTok, start) {
+			p.addError("line %d: unexpected %q inside map literal; check for a missing closing brace", p.curTok.Line, p.curTok.Literal)
 			p.nextToken()
 		}
 	}

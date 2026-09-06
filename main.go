@@ -56,27 +56,25 @@ func main() {
 	switch cmd {
 	case "run":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: gset run <file> [--keep]")
+			fmt.Println("Usage: gset run <file> [--target <lang>] [--keep]")
 			return
 		}
-		keep := false
-		if len(os.Args) > 3 && os.Args[3] == "--keep" {
-			keep = true
-		}
-		runFile(os.Args[2], cfg, keep)
+		keep, target, _ := parseFlags(os.Args[3:], true)
+		runFile(os.Args[2], cfg, keep, target)
 	case "transpile":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: gset transpile <file>")
+			fmt.Println("Usage: gset transpile <file> [--target <lang>] [-o <outfile>]")
 			return
 		}
-		transpileFile(os.Args[2], cfg)
+		_, target, outfile := parseFlags(os.Args[3:], false)
+		transpileFile(os.Args[2], cfg, target, outfile)
 	case "version":
 		fmt.Println("GSET v" + version)
 	case "help":
 		printHelp()
 	default:
 		if _, err := os.Stat(cmd); err == nil {
-			runFile(cmd, cfg, false)
+			runFile(cmd, cfg, false, "")
 		} else {
 			fmt.Printf("Unknown command: %s\n", cmd)
 			printHelp()
@@ -84,7 +82,35 @@ func main() {
 	}
 }
 
-func runFile(filename string, cfg config.GSETConfig, keep bool) {
+// parseFlags extracts the supported flags from a slice of arguments.
+// When allowKeep is true, "--keep" is honored. Returns the keep flag, an
+// optional target override, and an optional output path (transpile only).
+func parseFlags(args []string, allowKeep bool) (keep bool, target, out string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case allowKeep && arg == "--keep":
+			keep = true
+		case arg == "--target" || arg == "-t":
+			if i+1 < len(args) {
+				target = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(arg, "--target="):
+			target = strings.TrimPrefix(arg, "--target=")
+		case arg == "-o" || arg == "--output":
+			if i+1 < len(args) {
+				out = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(arg, "--output="):
+			out = strings.TrimPrefix(arg, "--output=")
+		}
+	}
+	return keep, target, out
+}
+
+func runFile(filename string, cfg config.GSETConfig, keep bool, target string) {
 	log := logger.Default()
 
 	if err := validateFilename(filename); err != nil {
@@ -121,6 +147,15 @@ func runFile(filename string, cfg config.GSETConfig, keep bool) {
 		os.Exit(1)
 	}
 
+	if target != "" {
+		n := transpiler.NormalizeTarget(target)
+		if !transpiler.IsSupportedTarget(n) {
+			fmt.Fprintf(os.Stderr, "Error: unsupported target '%s'\n", target)
+			os.Exit(1)
+		}
+		target = n
+	}
+
 	log.Debug("lexing input")
 	l := lexer.New(string(content))
 	p := parser.New(l)
@@ -136,17 +171,23 @@ func runFile(filename string, cfg config.GSETConfig, keep bool) {
 	}
 
 	log.Debug("executing transpiled code")
-	exec := transpiler.NewExecutor(nil)
-	if err := exec.Execute(prog, ext, filename, keep); err != nil {
-		log.Error("execution failed: %v", err)
-		fmt.Fprintf(os.Stderr, "Execution error: %v\n", err)
+	exec := transpiler.NewExecutor(cfg)
+	var execErr error
+	if target != "" {
+		execErr = exec.ExecuteFor(prog, target, filename, keep)
+	} else {
+		execErr = exec.Execute(prog, ext, filename, keep)
+	}
+	if execErr != nil {
+		log.Error("execution failed: %v", execErr)
+		fmt.Fprintf(os.Stderr, "Execution error: %v\n", execErr)
 		os.Exit(1)
 	}
 
 	log.Info("completed successfully")
 }
 
-func transpileFile(filename string, cfg config.GSETConfig) {
+func transpileFile(filename string, cfg config.GSETConfig, target, outfile string) {
 	log := logger.Default()
 
 	if err := validateFilename(filename); err != nil {
@@ -170,6 +211,20 @@ func transpileFile(filename string, cfg config.GSETConfig) {
 		os.Exit(1)
 	}
 
+	ext := strings.TrimPrefix(filepath.Ext(filename), ".")
+	if ext == filename {
+		ext = "py"
+	}
+
+	if target == "" {
+		target = transpiler.ExtensionToTarget(ext)
+	}
+	target = transpiler.NormalizeTarget(target)
+	if !transpiler.IsSupportedTarget(target) {
+		fmt.Fprintf(os.Stderr, "Error: unsupported target '%s'\n", target)
+		os.Exit(1)
+	}
+
 	log.Debug("lexing input")
 	l := lexer.New(string(content))
 	p := parser.New(l)
@@ -184,10 +239,24 @@ func transpileFile(filename string, cfg config.GSETConfig) {
 		os.Exit(1)
 	}
 
-	log.Debug("transpiling")
-	t := transpiler.New(cfg.GlobalKeywords)
-	output := t.Translate(prog)
-	fmt.Println(output)
+	log.Debug("transpiling to target: %s", target)
+	t := transpiler.New(cfg.GetKeywords(nil, transpiler.TargetExtension(target)))
+	output, err := t.TranslateFor(prog, target)
+	if err != nil {
+		log.Error("transpile failed: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if outfile != "" {
+		if err := os.WriteFile(outfile, []byte(output), 0644); err != nil {
+			log.Error("failed to write output file: %v", err)
+			fmt.Fprintf(os.Stderr, "Error writing output file: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		fmt.Println(output)
+	}
 
 	log.Info("transpiled successfully")
 }
@@ -212,11 +281,17 @@ func printHelp() {
 	fmt.Println("GSET - Generic Syntax Extension Tool v" + version + `
 
 Usage:
-  gset run <file>        Transpile and execute a file
-  gset run <file> --keep Keep the execution file after running
-  gset transpile <file>  Transpile and print output
-  gset version           Show version
-  gset help              Show this help
+  gset run <file>                        Transpile and execute a file
+  gset run <file> --target <lang>        Run for a specific target
+  gset run <file> --keep                 Keep the execution file after running
+  gset transpile <file>                  Transpile and print output
+  gset transpile <file> --target <lang>  Transpile to a specific target
+  gset transpile <file> -o <outfile>     Write output to a file
+  gset version                           Show version
+  gset help                              Show this help
+
+Targets:
+  go, python, javascript, java, ruby
 
 Supported features:
   - Variables: var, val, let, const

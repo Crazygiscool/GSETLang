@@ -3,6 +3,8 @@ package transpiler
 import (
 	"fmt"
 	"gsetlang/ast"
+	"gsetlang/config"
+	"gsetlang/logger"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,11 +13,12 @@ import (
 )
 
 type Transpiler struct {
-	cfg map[string]string
+	cfg    map[string]string
+	target string
 }
 
 func New(cfg map[string]string) *Transpiler {
-	return &Transpiler{cfg: cfg}
+	return &Transpiler{cfg: cfg, target: "go"}
 }
 
 func (t *Transpiler) Translate(program *ast.Program) string {
@@ -27,6 +30,35 @@ func (t *Transpiler) Translate(program *ast.Program) string {
 		}
 	}
 	return strings.TrimSpace(out)
+}
+
+// TranslateFor returns the program rendered as a complete, runnable source
+// file in the given target language. The target must already be normalized
+// (see NormalizeTarget).
+func (t *Transpiler) TranslateFor(program *ast.Program, target string) (string, error) {
+	target = NormalizeTarget(target)
+	if !IsSupportedTarget(target) {
+		return "", fmt.Errorf("target %q is not supported (implemented: go, python, javascript, java, ruby)", target)
+	}
+	e := &emitter{target: target, kw: t.cfg}
+	return e.emitProgram(program), nil
+}
+
+func IsSupportedTarget(target string) bool {
+	for _, t := range supportedTargets {
+		if t == target {
+			return true
+		}
+	}
+	return false
+}
+
+// BuildFile renders a parsed program to a complete runnable source file for
+// the given target. It is the standalone entry point used by the CLI and the
+// executor.
+func BuildFile(program *ast.Program, target string) (string, error) {
+	t := New(nil)
+	return t.TranslateFor(program, target)
 }
 
 func (t *Transpiler) translateStatement(stmt ast.Statement) string {
@@ -372,25 +404,22 @@ func (t *Transpiler) translateListComprehension(e *ast.ListComprehension) string
 }
 
 type Executor struct {
-	compilers map[string]CompilerConfig
+	cfg       *config.GSETConfig
+	compilers map[string]config.CompilerConfig
 }
 
-type CompilerConfig struct {
-	Command string
-	Args    string
-	Wrapper string
-	Run     string
-}
-
-func NewExecutor(compilers map[string]CompilerConfig) *Executor {
-	if compilers == nil {
-		compilers = GetCompilers()
+func NewExecutor(cfg config.GSETConfig) *Executor {
+	defaults := GetCompilers()
+	for k, v := range cfg.Compilers {
+		if v.Command != "" {
+			defaults[k] = v
+		}
 	}
-	return &Executor{compilers: compilers}
+	return &Executor{cfg: &cfg, compilers: defaults}
 }
 
-func GetCompilers() map[string]CompilerConfig {
-	return map[string]CompilerConfig{
+func GetCompilers() map[string]config.CompilerConfig {
+	return map[string]config.CompilerConfig{
 		"py":   {Command: "python3", Args: "", Wrapper: ""},
 		"js":   {Command: "node", Args: "", Wrapper: ""},
 		"go":   {Command: "go", Args: "run", Wrapper: ""},
@@ -400,10 +429,22 @@ func GetCompilers() map[string]CompilerConfig {
 }
 
 func (e *Executor) Execute(program *ast.Program, ext, filename string, keep bool) error {
-	t := New(nil)
-	code := t.Translate(program)
+	target := ExtensionToTarget(ext)
+	return e.ExecuteFor(program, target, filename, keep)
+}
 
-	if code == "" {
+func (e *Executor) ExecuteFor(program *ast.Program, target, filename string, keep bool) error {
+	target = NormalizeTarget(target)
+	t := New(nil)
+	if e.cfg != nil {
+		t.cfg = e.cfg.GetKeywords(nil, TargetExtension(target))
+	}
+	code, err := t.TranslateFor(program, target)
+	if err != nil {
+		return err
+	}
+
+	if strings.TrimSpace(code) == "" {
 		return nil
 	}
 
@@ -411,69 +452,56 @@ func (e *Executor) Execute(program *ast.Program, ext, filename string, keep bool
 		return fmt.Errorf("generated code exceeds maximum size (10MB)")
 	}
 
-	needsFmt := strings.Contains(code, "fmt.")
-
-	wrapper := ""
-	if ext == "go" {
-		wrapper = "package main\n"
-		if needsFmt {
-			wrapper += "import \"fmt\"\n"
-		}
-		wrapper += "func main() {\n    " + code + "\n}"
-	} else {
-		wrapper = code
-	}
-
-	compCfg, ok := e.compilers[ext]
+	fileExt := targetExtension[target]
+	compCfg, ok := e.compilers[fileExt]
 	if !ok {
-		compCfg = e.compilers["go"]
-		ext = "go"
-	}
-
-	if compCfg.Wrapper != "" && ext != "go" {
-		wrapper = strings.Replace(compCfg.Wrapper, "##CODE##", code, -1)
+		return fmt.Errorf("no compiler configured for target %q", target)
 	}
 
 	var tmpFile string
 	baseName := filepath.Base(filename)
-	switch ext {
-	case "py":
+	switch target {
+	case "python":
 		tmpFile = "/tmp/gset_" + baseName + ".py"
-	case "js":
+	case "javascript":
 		tmpFile = "/tmp/gset_" + baseName + ".js"
-	case "java":
-		tmpFile = "Main.java"
-	case "rb":
-		tmpFile = "/tmp/gset_" + baseName + ".rb"
 	case "go":
 		tmpFile = "/tmp/gset_" + baseName + ".go"
+	case "java":
+		tmpFile = "Main.java"
+	case "ruby":
+		tmpFile = "/tmp/gset_" + baseName + ".rb"
 	default:
-		tmpFile = "/tmp/gset_exec." + ext
+		tmpFile = "/tmp/gset_" + baseName + "." + fileExt
 	}
 
-	if err := os.WriteFile(tmpFile, []byte(wrapper), 0644); err != nil {
+	if err := os.WriteFile(tmpFile, []byte(code), 0644); err != nil {
 		return fmt.Errorf("failed to write temporary file: %w", err)
 	}
 
-	fmt.Printf("--- COMPILING WITH %s ---\n", ext)
+	log := logger.Default()
+	log.Debug("compiling with %s (%s)", target, fileExt)
 
-	var args []string
-	if compCfg.Args != "" {
-		args = strings.Split(compCfg.Args, " ")
-	} else if ext == "go" {
-		args = []string{"run"}
+	var cmd *exec.Cmd
+	if compCfg.Run != "" {
+		// Full shell pipeline (e.g. Java: javac Main.java && java Main).
+		cmd = exec.Command("sh", "-c", compCfg.Run)
+	} else {
+		var args []string
+		if compCfg.Args != "" {
+			args = strings.Split(compCfg.Args, " ")
+		}
+		args = append(args, tmpFile)
+		cmd = exec.Command(compCfg.Command, args...)
 	}
-	args = append(args, tmpFile)
-	cmd := exec.Command(compCfg.Command, args...)
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	fmt.Println("--- RUNNING GSET OUTPUT ---")
 	if err := cmd.Run(); err != nil {
 		if !keep {
 			os.Remove(tmpFile)
-			if ext == "java" {
+			if target == "java" {
 				os.Remove("Main.class")
 			}
 		}
@@ -482,9 +510,25 @@ func (e *Executor) Execute(program *ast.Program, ext, filename string, keep bool
 
 	if !keep {
 		os.Remove(tmpFile)
-		if ext == "java" {
+		if target == "java" {
 			os.Remove("Main.class")
 		}
 	}
 	return nil
+}
+
+// targetExtension maps a canonical target back to the compiler configuration
+// key used by GetCompilers/CompilerConfig.
+var targetExtension = map[string]string{
+	"go":         "go",
+	"python":     "py",
+	"javascript": "js",
+	"java":       "java",
+	"ruby":       "rb",
+}
+
+// TargetExtension returns the compiler configuration / keyword-map extension
+// key (e.g. "py", "js") for a canonical target.
+func TargetExtension(target string) string {
+	return targetExtension[NormalizeTarget(target)]
 }
