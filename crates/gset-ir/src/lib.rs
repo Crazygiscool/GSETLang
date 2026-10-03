@@ -33,3 +33,7 @@
 //! `export`) disappeared from Go output with no warning at all.
 
 #![forbid(unsafe_code)]
+
+mod span;
+
+pub use span::{LineIndex, SourceFile, SourceId, SourceMap, Span};
