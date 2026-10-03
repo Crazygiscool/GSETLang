@@ -19,15 +19,15 @@ ignore = []
 version = 2
 # Exactly the licences currently present in the graph, and nothing speculative:
 # MIT and Apache-2.0 from the dependency set, Unicode-3.0 pulled in by
-# unicode-ident via proc-macro2, and CC-BY-NC-4.0 which is the project's own
-# licence inherited from the Go implementation. An unlisted licence for a new
-# dependency is meant to fail the build and force a decision.
+# unicode-ident via proc-macro2. The project's own crates are MIT OR Apache-2.0,
+# so they need no separate entry.
+#
+# An unlisted licence for a new dependency is meant to fail the build and force
+# a decision rather than pass unnoticed.
 allow = [
     "MIT",
     "Apache-2.0",
     "Unicode-3.0",
-    # First-party only. No third-party dependency may use this licence.
-    "CC-BY-NC-4.0",
 ]
 confidence-threshold = 0.9
 
