@@ -196,6 +196,27 @@ impl Pattern {
         }
     }
 
+    /// Collects every name this pattern binds, in source order.
+    ///
+    /// Recurses, because [`PatternKind::Sequence`] and
+    /// [`PatternKind::Mapping`] keep their names in `subpatterns` and leave
+    /// `names` empty. Reading `names` alone silently undercounts a
+    /// destructuring pattern to zero, which is how a `a, b = f()` ends up
+    /// looking like a declaration that binds nothing.
+    pub fn collect_names(&self, out: &mut Vec<Name>) {
+        out.extend(self.names.iter().cloned());
+        for subpattern in &self.subpatterns {
+            subpattern.collect_names(out);
+        }
+    }
+
+    /// Every name this pattern binds, in source order.
+    pub fn bound_names(&self) -> Vec<Name> {
+        let mut names = Vec::new();
+        self.collect_names(&mut names);
+        names
+    }
+
     /// Creates a mapping destructuring pattern.
     pub fn mapping(subpatterns: Vec<Pattern>, span: Span) -> Self {
         Pattern {
