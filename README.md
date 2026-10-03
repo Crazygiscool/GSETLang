@@ -4,7 +4,7 @@
 
 **Write in any language syntax, compile to any language.**
 
-[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-yellow)](LICENSE)
+[![License: Apache-2.0 OR MIT](https://img.shields.io/badge/License-Apache--2.0%20OR%20MIT-blue)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Release](https://img.shields.io/github/v/release/Crazygiscool/GSETLang)](https://github.com/Crazygiscool/GSETLang/releases)
 [![Tests](https://img.shields.io/github/actions/workflow/status/Crazygiscool/GSETLang/test.yml)](https://github.com/Crazygiscool/GSETLang/actions)
@@ -436,13 +436,16 @@ Log levels: DEBUG, INFO, WARN, ERROR, FATAL
 
 ## License
 
-**CC BY-NC 4.0** - Creative Commons Attribution-NonCommercial 4.0
+Dual-licensed under either of:
 
-- Use and remix freely
-- Attribution required
-- No commercial use
+- **Apache License 2.0** - permissive, with an explicit patent grant
+- **MIT License** - permissive, short
 
-See [LICENSE](LICENSE) for full text.
+At your option. This replaces the previous CC BY-NC 4.0 licence, whose
+non-commercial term blocked reuse and publishing. The Rust rewrite on this branch
+is dual-licensed; the 2.x Go releases remain under CC BY-NC 4.0.
+
+See [LICENSE](LICENSE) for both full texts.
 
 ---
 
@@ -457,6 +460,6 @@ See [LICENSE](LICENSE) for full text.
 
 <div align="center">
 
-**Version:** 2.2.1 | **License:** CC BY-NC 4.0 | **Copyright:** 2024-2026 GSET Team
+**Version:** 2.2.1 | **License:** Apache-2.0 OR MIT | **Copyright:** 2024-2026 GSET Team
 
 </div>
