@@ -1,0 +1,13 @@
+[package]
+name = "gset-backend"
+description = "Target-language backends that emit runnable source from the GSET IR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+gset-ir = { workspace = true }
+thiserror = { workspace = true }
