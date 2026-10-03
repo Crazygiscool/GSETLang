@@ -1,0 +1,47 @@
+# cargo-deny configuration, run by the rust-supply-chain CI job.
+#
+# Without this file `cargo deny check` falls back to built-in defaults, which
+# are permissive and therefore not a meaningful gate. Being explicit is the
+# point: a new dependency with an unexpected licence should fail CI and force a
+# decision rather than pass unnoticed.
+
+[graph]
+# The Go tree is still present until milestone 6 but is not in the cargo
+# graph, so nothing here needs to know about it.
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# Exactly the licences currently present in the graph, and nothing speculative:
+# MIT and Apache-2.0 from the dependency set, Unicode-3.0 pulled in by
+# unicode-ident via proc-macro2, and CC-BY-NC-4.0 which is the project's own
+# licence inherited from the Go implementation. An unlisted licence for a new
+# dependency is meant to fail the build and force a decision.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    # First-party only. No third-party dependency may use this licence.
+    "CC-BY-NC-4.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Multiple semver-incompatible versions of a crate are tolerated but reported.
+# A hard deny here would fail the build over routine additions such as the two
+# winnow 0.7/1.0 pairs that toml pulls in.
+multiple-versions = "warn"
+# A wildcard requirement makes the lockfile the only thing pinning a version,
+# which defeats the point of committing it.
+wildcards = "deny"
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
