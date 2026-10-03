@@ -114,6 +114,64 @@ jobs:
       - name: Check advisories, bans and licences
         run: cargo deny check
 
+  # Platform coverage for the Rust binary.
+  #
+  # This uses native runners per platform rather than `--target` cross builds.
+  # Cross-compiling does not work here: tree-sitter is a C dependency, so
+  # `cargo check --target aarch64-unknown-linux-gnu` fails looking for
+  # aarch64-linux-gnu-gcc, and reaching Darwin from Linux additionally needs an
+  # Apple SDK. Native runners are the same approach Rust projects use upstream,
+  # and they produce the real linked binary rather than a check-only artifact.
+  #
+  # Each entry also asserts the artifact is named `gset`, because install.sh and
+  # every packaging manifest expect that name.
+  rust-platforms:
+    name: rust ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build release binary
+        run: cargo build --release -p gset-cli
+
+      - name: Resolve artifact path
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="target/release/gset"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN="${BIN}.exe"
+          fi
+          echo "BIN=${BIN}" >> "$GITHUB_ENV"
+
+      - name: Verify artifact is named gset
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f "$BIN" ]; then
+            echo "expected artifact $BIN was not produced" >&2
+            ls -la target/release/ >&2
+            exit 1
+          fi
+          echo "ok: $BIN"
+
+      - name: Run the binary
+        shell: bash
+        run: "./${BIN} --version"
+
   cross-build:
     runs-on: ubuntu-latest
     strategy:
