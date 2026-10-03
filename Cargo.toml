@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/gset-ir",
+    "crates/gset-frontend",
 ]
 
 [workspace.package]
@@ -13,6 +14,10 @@ repository = "https://github.com/Crazygiscool/GSETLang"
 authors = ["GSET Team"]
 
 [workspace.dependencies]
+# Internal crates
+gset-ir = { path = "crates/gset-ir" }
+gset-frontend = { path = "crates/gset-frontend" }
+
 # External
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
