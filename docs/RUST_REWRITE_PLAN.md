@@ -169,46 +169,65 @@ is purely additive until the deletion commit.
 ### M0 — Baseline & scaffolding
 
 - `rust-toolchain.toml` pinned to 1.98.1; workspace skeleton; dependency set.
-- **Capture the Go startup baseline before Go is deleted.** Go is not installed
-  in the current dev environment, so this needs a machine with Go 1.21 first.
-- Record Go output as fixtures — as *negative* fixtures, since we need
-  bug-avoidance, not parity. One commit per bug class from the audit.
-- CI: `cargo fmt`, `cargo clippy`, `cargo test`, `cargo-deny`, cross-build matrix.
-  `cargo-audit` is **not** included: `cargo deny check advisories` reads the same
-  RustSec advisory database, so a second tool would duplicate the job and add a
-  second install to every run. Adopt `cargo-audit` only if `cargo-deny`'s
-  advisory coverage is ever found to be insufficient.
+- Go startup baseline: **captured**. See below.
+- Go output fixtures: **captured** as negative fixtures in `tests/baseline/`,
+  one entry per defect class, with the M2 syntax matrix run against them.
+- CI: `cargo fmt`, `cargo clippy`, `cargo test`, `cargo-deny`, cross-platform
+  build matrix. `cargo-audit` is **not** included: `cargo deny check advisories`
+  reads the same RustSec advisory database, so a second tool would duplicate the
+  job and add a second install to every run. Adopt `cargo-audit` only if
+  `cargo-deny`'s advisory coverage is ever found to be insufficient.
 
-**Status.** Scaffolding, CI and the supply-chain policy are done. Rust-side
-startup is **1.79 ms median / 3.51 ms p90** for `gset --version`, measured over
-50 invocations of the release build on the dev machine; 2.16 ms median for
-`--help`. Method, so the number is comparable later:
+**Status: complete.**
 
-```bash
-cargo build --release -p gset-cli
-python3 -c 'import subprocess,time,statistics
-ts=[]
-for _ in range(50):
-    t=time.perf_counter(); subprocess.run(["./target/release/gset","--version"],capture_output=True)
-    ts.append((time.perf_counter()-t)*1000)
-print(statistics.median(ts))'
-```
+#### Startup baseline
 
-This includes Python's `subprocess` spawn overhead, so it is an upper bound, and
-it is the number to compare against the Go baseline once Go 1.21 is available.
-Two things are worth remembering when that comparison is made:
+Measured with Go 1.21.13 (matching CI, via `GOTOOLCHAIN`) against Rust 1.98.1,
+release builds, 200 interleaved invocations of `gset version`, so machine drift
+hits both equally:
 
-- The Go binary read `gset.conf` via `config.LoadConfig("")`, which resolved
-  against `os.Getwd()`, *before* parsing arguments. A large config file was
-  therefore pure startup cost for every invocation including `--version`. The
-  Rust CLI parses arguments first and touches no grammar until a language is
-  known.
-- Cross-compiling is not available to us for the platform matrix. `tree-sitter`
-  is a C dependency, so `cargo check --target` fails for want of a cross C
-  compiler. CI builds natively per platform instead.
+| | median | p90 | min |
+|---|---|---|---|
+| Go 1.21.13 | 3.76 ms | 5.74 ms | 2.25 ms |
+| Rust 1.98.1 (scaffold, no grammar loaded) | 2.07 ms | 3.35 ms | 1.45 ms |
 
-Remaining M0 work is blocked on Go being available, not on anything in the Rust
-tree.
+Rust is **45 % faster** already, on a CLI that does not yet parse anything. The
+gap should widen: Go links and initialises the whole emitter, and Rust will not
+load a grammar until a language is known.
+
+The Go figure also depends on the working directory, because `LoadConfig("")`
+resolves against `os.Getwd()` and runs before argument parsing:
+
+| `gset.conf` in cwd | Go median | delta |
+|---|---|---|
+| none | 4.15 ms | — |
+| 256 KB | 12.97 ms | +8.8 ms |
+| 1 MB | 42.14 ms | +38.0 ms |
+
+So a large config is a per-invocation tax paid even by `gset version`, scaling
+linearly with file size. The repo's own 9 KB `gset.conf` is within noise, which
+is why an earlier measurement understated this.
+
+#### Defect fixtures
+
+`tests/baseline/` holds ten minimal `.gset` inputs, the Go implementation's real
+output for all five targets, and a checklist of 15 defect classes. Running the M2
+syntax matrix against that output is the "before" column:
+
+| Target | Check | Pass | Fail |
+|---|---|---|---|
+| go | `gofmt -e` | 6 | 4 |
+| python | `python3 -m py_compile` | 9 | 1 |
+| javascript | `node --check` | 8 | 2 |
+| ruby | `ruby -c` | 9 | 1 |
+| java | `javac` | 0 | 10 |
+| **total** | | **32** | **18** |
+
+These figures are parse-and-compile only. Most of the checklist produces *valid*
+syntax that means the wrong thing — a dropped `if` that still compiles, an `enum`
+that vanishes without a warning, `??` quietly becoming `||` in Ruby — so the
+checklist is what the rewrite owes against, and the matrix is only the part that
+happens to be automatable.
 
 ### M1 — Pipeline proof: Python → IR → Go
 
