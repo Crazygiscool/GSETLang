@@ -34,6 +34,8 @@
 
 #![forbid(unsafe_code)]
 
+mod diagnostic;
 mod span;
 
+pub use diagnostic::{Diagnostic, DiagnosticBag, Label, Severity};
 pub use span::{LineIndex, SourceFile, SourceId, SourceMap, Span};
