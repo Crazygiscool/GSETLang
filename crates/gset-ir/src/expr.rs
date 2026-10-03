@@ -183,6 +183,19 @@ impl Pattern {
         }
     }
 
+    /// The one name this pattern binds, if it binds exactly one.
+    ///
+    /// `None` for `_`, and for destructuring patterns, which bind several names
+    /// or none. Callers that need a single name, such as deciding whether a
+    /// module-level declaration collides with an existing symbol, must treat
+    /// `None` as "not a simple binding" rather than assuming the happy path.
+    pub fn single_binding(&self) -> Option<&Name> {
+        match self.kind {
+            PatternKind::Bind if self.names.len() == 1 => self.names.first(),
+            _ => None,
+        }
+    }
+
     /// Creates a mapping destructuring pattern.
     pub fn mapping(subpatterns: Vec<Pattern>, span: Span) -> Self {
         Pattern {

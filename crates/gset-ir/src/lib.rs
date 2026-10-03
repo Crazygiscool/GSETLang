@@ -36,6 +36,7 @@
 
 mod diagnostic;
 mod expr;
+mod item;
 mod span;
 mod stmt;
 mod types;
@@ -45,9 +46,10 @@ pub use expr::{
     BinaryOp, ComparisonOp, CompileError, ComprehensionKind, Expr, ExprKind, GeneratorClause,
     Literal, LogicalOp, NamedArg, Path, Pattern, PatternKind, UnaryOp,
 };
-pub use span::{LineIndex, SourceFile, SourceId, SourceMap, Span};
-pub use stmt::{
-    Block, CatchClause, Class, Else, Enum, Field, Function, Import, ImportKind, ImportedName,
-    Interface, MatchCase, MethodSignature, ModuleSource, Record, Stmt, TypeAlias, VarDecl, Variant,
+pub use item::{
+    Class, Enum, Field, Function, Import, ImportKind, ImportedName, Interface, Item, LangId,
+    MethodSignature, Module, ModuleSource, Record, TypeAlias, Variant,
 };
+pub use span::{LineIndex, SourceFile, SourceId, SourceMap, Span};
+pub use stmt::{Block, CatchClause, Else, MatchCase, Stmt, VarDecl};
 pub use types::{GenericId, IntWidth, Name, Type, UnknownReason, Variance, name};

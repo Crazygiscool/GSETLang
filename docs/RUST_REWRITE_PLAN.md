@@ -124,7 +124,7 @@ grammars.
 Typed, span-annotated, module-aware. Every node carries a source span.
 
 ```rust
-struct Module { items: Vec<Item>, imports: Vec<Import>, lang: LangId, span: Span }
+struct Module { items: Vec<Item>, lang: LangId, span: Span }  // imports ARE items
 enum Item { Fn(FnDecl), Class(ClassDecl), Record(..), Enum(..), Global(VarDecl), .. }
 
 struct Expr { kind: ExprKind, ty: Type, span: Span }
@@ -138,6 +138,10 @@ Three design decisions specifically kill bug classes found in the audit:
 `ast.Program.Imports` was written by the parser and read by nothing, so no
 language ever emitted an import from a top-level `import`. In Rust, `Import` is
 an `Item`, and `emit_module` is required to consume it.
+
+Note this is why `Module` has no separate `imports` field. A side table that
+exists only to be populated is the original defect in a new coat; imports reach
+backends through the same `items` list they already have to walk.
 
 **2. A capability matrix replaces silent `return nil`.** Backends declare
 support *before* emission:
