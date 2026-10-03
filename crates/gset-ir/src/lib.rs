@@ -37,6 +37,7 @@
 mod diagnostic;
 mod expr;
 mod span;
+mod stmt;
 mod types;
 
 pub use diagnostic::{Diagnostic, DiagnosticBag, Label, Severity};
@@ -45,4 +46,8 @@ pub use expr::{
     Literal, LogicalOp, NamedArg, Path, Pattern, PatternKind, UnaryOp,
 };
 pub use span::{LineIndex, SourceFile, SourceId, SourceMap, Span};
+pub use stmt::{
+    Block, CatchClause, Class, Else, Enum, Field, Function, Import, ImportKind, ImportedName,
+    Interface, MatchCase, MethodSignature, ModuleSource, Record, Stmt, TypeAlias, VarDecl, Variant,
+};
 pub use types::{GenericId, IntWidth, Name, Type, UnknownReason, Variance, name};

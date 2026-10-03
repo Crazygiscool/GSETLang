@@ -153,6 +153,17 @@ impl Span {
     }
 }
 
+/// The default span is synthetic.
+///
+/// A span that defaulted to file 0 offset 0 would silently point diagnostics at
+/// the top of whichever file happened to be registered first, which is worse
+/// than admitting there is no source.
+impl Default for Span {
+    fn default() -> Self {
+        Span::synthetic()
+    }
+}
+
 impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_synthetic() {
