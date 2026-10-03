@@ -173,8 +173,42 @@ is purely additive until the deletion commit.
   in the current dev environment, so this needs a machine with Go 1.21 first.
 - Record Go output as fixtures — as *negative* fixtures, since we need
   bug-avoidance, not parity. One commit per bug class from the audit.
-- CI: `cargo fmt`, `cargo clippy`, `cargo test`, `cargo-deny`, `cargo-audit`,
-  cross-build matrix.
+- CI: `cargo fmt`, `cargo clippy`, `cargo test`, `cargo-deny`, cross-build matrix.
+  `cargo-audit` is **not** included: `cargo deny check advisories` reads the same
+  RustSec advisory database, so a second tool would duplicate the job and add a
+  second install to every run. Adopt `cargo-audit` only if `cargo-deny`'s
+  advisory coverage is ever found to be insufficient.
+
+**Status.** Scaffolding, CI and the supply-chain policy are done. Rust-side
+startup is **1.79 ms median / 3.51 ms p90** for `gset --version`, measured over
+50 invocations of the release build on the dev machine; 2.16 ms median for
+`--help`. Method, so the number is comparable later:
+
+```bash
+cargo build --release -p gset-cli
+python3 -c 'import subprocess,time,statistics
+ts=[]
+for _ in range(50):
+    t=time.perf_counter(); subprocess.run(["./target/release/gset","--version"],capture_output=True)
+    ts.append((time.perf_counter()-t)*1000)
+print(statistics.median(ts))'
+```
+
+This includes Python's `subprocess` spawn overhead, so it is an upper bound, and
+it is the number to compare against the Go baseline once Go 1.21 is available.
+Two things are worth remembering when that comparison is made:
+
+- The Go binary read `gset.conf` via `config.LoadConfig("")`, which resolved
+  against `os.Getwd()`, *before* parsing arguments. A large config file was
+  therefore pure startup cost for every invocation including `--version`. The
+  Rust CLI parses arguments first and touches no grammar until a language is
+  known.
+- Cross-compiling is not available to us for the platform matrix. `tree-sitter`
+  is a C dependency, so `cargo check --target` fails for want of a cross C
+  compiler. CI builds natively per platform instead.
+
+Remaining M0 work is blocked on Go being available, not on anything in the Rust
+tree.
 
 ### M1 — Pipeline proof: Python → IR → Go
 
