@@ -35,9 +35,14 @@
 #![forbid(unsafe_code)]
 
 mod diagnostic;
+mod expr;
 mod span;
 mod types;
 
 pub use diagnostic::{Diagnostic, DiagnosticBag, Label, Severity};
+pub use expr::{
+    BinaryOp, ComparisonOp, CompileError, ComprehensionKind, Expr, ExprKind, GeneratorClause,
+    Literal, LogicalOp, NamedArg, Path, Pattern, PatternKind, UnaryOp,
+};
 pub use span::{LineIndex, SourceFile, SourceId, SourceMap, Span};
 pub use types::{GenericId, IntWidth, Name, Type, UnknownReason, Variance, name};
