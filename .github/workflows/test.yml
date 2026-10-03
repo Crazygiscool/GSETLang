@@ -66,6 +66,54 @@ jobs:
           go fmt ./...
           git diff --exit-code
 
+  # Rust replacement pipeline. Runs alongside the Go jobs until milestone 6
+  # deletes the Go tree; the Go jobs are removed in the same commit.
+  #
+  # No toolchain install step: rustup honours the pinned rust-toolchain.toml
+  # when cargo is first invoked, and the runner image ships rustup.
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Format check
+        run: |
+          cargo fmt --all -- --check
+          git diff --exit-code
+
+  rust-supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+
+      - name: Check advisories, bans and licences
+        run: cargo deny check
+
   cross-build:
     runs-on: ubuntu-latest
     strategy:
