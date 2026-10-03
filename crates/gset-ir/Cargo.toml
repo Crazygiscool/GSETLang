@@ -1,0 +1,15 @@
+[package]
+name = "gset-ir"
+description = "Language-neutral typed intermediate representation for GSET"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# gset-ir is the bottom of the dependency graph: it depends on no other crate
+# in the workspace, so the IR can never be constrained by a frontend or a
+# backend's concerns.
+[dependencies]
+thiserror = { workspace = true }
