@@ -36,6 +36,8 @@
 
 mod diagnostic;
 mod span;
+mod types;
 
 pub use diagnostic::{Diagnostic, DiagnosticBag, Label, Severity};
 pub use span::{LineIndex, SourceFile, SourceId, SourceMap, Span};
+pub use types::{GenericId, IntWidth, Name, Type, UnknownReason, Variance, name};
