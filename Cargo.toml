@@ -6,6 +6,7 @@ members = [
     "crates/gset-backend",
     "crates/gset-semantic",
     "crates/gset-deps",
+    "crates/gset-cli",
 ]
 
 [workspace.package]
@@ -23,6 +24,7 @@ gset-frontend = { path = "crates/gset-frontend" }
 gset-backend = { path = "crates/gset-backend" }
 gset-semantic = { path = "crates/gset-semantic" }
 gset-deps = { path = "crates/gset-deps" }
+gset-cli = { path = "crates/gset-cli" }
 
 # External
 clap = { version = "4.5", features = ["derive"] }
