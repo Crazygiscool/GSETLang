@@ -243,6 +243,21 @@ A fresh `tests/corpus/py/` set of 15–20 varied Python files is written alongsi
 M1, covering the constructs the audit says the Go emitter handled. Without it the
 syntax-check gate has nothing to run.
 
+Done so far: the IR is complete for M1's needs (spans, diagnostics, types,
+expressions, statements, items and module, and a validating lowering builder),
+and the Python grammar is wired behind a `python` feature with the `Frontend`
+trait and registry in place. The Python lowering itself is the next step, and
+`gset transpile` still does nothing.
+
+Two decisions taken while building the IR, both recorded in the code:
+
+- `Module` has no separate `imports` field. See design decision 1 above; a side
+  table populated but never read is the original defect in a new coat.
+- Grammars are Cargo features rather than separate crates. Separate crates would
+  isolate compilation but multiply workspace members and release plumbing;
+  features achieve the same "don't compile what you don't use" and were verified
+  with `--no-default-features`.
+
 **Gate:** `gset transpile fib.py --to go` emits Go that passes `gofmt` and
 `go vet`. Startup within budget of the Go baseline.
 
