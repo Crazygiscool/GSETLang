@@ -4,6 +4,8 @@ members = [
     "crates/gset-ir",
     "crates/gset-frontend",
     "crates/gset-backend",
+    "crates/gset-semantic",
+    "crates/gset-deps",
 ]
 
 [workspace.package]
@@ -19,6 +21,8 @@ authors = ["GSET Team"]
 gset-ir = { path = "crates/gset-ir" }
 gset-frontend = { path = "crates/gset-frontend" }
 gset-backend = { path = "crates/gset-backend" }
+gset-semantic = { path = "crates/gset-semantic" }
+gset-deps = { path = "crates/gset-deps" }
 
 # External
 clap = { version = "4.5", features = ["derive"] }
