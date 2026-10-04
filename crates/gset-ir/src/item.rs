@@ -10,7 +10,7 @@
 //! reached generated output. Because [`Item::Import`] is an item a backend
 //! must handle, that class of silent drop cannot recur.
 
-use crate::expr::{Expr, Pattern};
+use crate::expr::{Expr, ExprKind, Pattern};
 use crate::span::Span;
 use crate::stmt::{Block, Stmt, VarDecl};
 use crate::types::{Name, Type};
@@ -354,11 +354,55 @@ impl Import {
     }
 }
 
+/// A decorator applied to a function or class.
+///
+/// Kept as an expression rather than desugared into a wrapper call. Desugaring
+/// `\@property` into `f = property(f)` loses the source, loses the order the
+/// decorators were written in, and makes a backend guess which wrappers map onto
+/// native language features. `@staticmethod` and Go's struct tags need
+/// different treatment in every target, and that decision belongs to the backend
+/// with the full list in front of it.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Decorator {
+    /// The decorator expression: `@name` or `@name(args)`.
+    ///
+    /// Whether it was called is visible in the expression's own kind, so there is
+    /// no separate flag to keep in step with it.
+    pub expr: Expr,
+    /// Where the decorator was written, including the `@`.
+    pub span: Span,
+}
+
+impl Decorator {
+    /// Wraps a decorator expression.
+    pub fn new(expr: Expr, span: Span) -> Self {
+        Decorator { expr, span }
+    }
+
+    /// The bare name, when the decorator is a plain path such as `@property`.
+    ///
+    /// A backend that can map a known name onto a native construct needs this,
+    /// and needs it to be `None` rather than a guess when the decorator is a
+    /// call or an attribute access.
+    pub fn simple_name(&self) -> Option<&Name> {
+        match &self.expr.kind {
+            ExprKind::Path(path) if path.is_bare() => path.segments.first(),
+            _ => None,
+        }
+    }
+}
+
 /// A function declaration.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Function {
     /// The function name.
     pub name: Name,
+    /// Decorators, in source order.
+    ///
+    /// Python applies these bottom-up, so the last one is applied first. The
+    /// order is preserved rather than reversed because a backend that maps a
+    /// decorator to a native feature has to reproduce it exactly.
+    pub decorators: Vec<Decorator>,
     /// Parameter patterns, in declaration order.
     pub params: Vec<Pattern>,
     /// Declared parameter types, where the source states them. `None` entries are
@@ -414,6 +458,8 @@ impl Function {
 pub struct Class {
     /// The class name.
     pub name: Name,
+    /// Decorators, in source order. See [`Function::decorators`].
+    pub decorators: Vec<Decorator>,
     /// Base class, as written.
     pub extends: Option<crate::expr::Path>,
     /// Implemented interfaces or traits, as written.
@@ -563,6 +609,7 @@ mod tests {
         // different node kinds is what makes that impossible to represent.
         let function = Function {
             name: name("pick"),
+            decorators: Vec::new(),
             params: vec![Pattern::bind(name("n"), span())],
             param_types: vec![None],
             ret: None,
@@ -677,6 +724,7 @@ mod tests {
         // has even run.
         let function = Function {
             name: name("add"),
+            decorators: Vec::new(),
             params: vec![
                 Pattern::bind(name("a"), span()),
                 Pattern::bind(name("b"), span()),
@@ -706,6 +754,7 @@ mod tests {
     fn function_signature_uses_declared_types_when_present() {
         let function = Function {
             name: name("add"),
+            decorators: Vec::new(),
             params: vec![Pattern::bind(name("a"), span())],
             param_types: vec![Some(Type::Bool)],
             ret: Some(Type::Bool),
@@ -759,6 +808,7 @@ mod tests {
         )));
         module.push(Item::Function(Function {
             name: name("main"),
+            decorators: Vec::new(),
             params: vec![],
             param_types: vec![],
             ret: None,
@@ -781,6 +831,7 @@ mod tests {
         let mut module = Module::empty(LangId::PYTHON, span());
         module.push(Item::Function(Function {
             name: name("main"),
+            decorators: Vec::new(),
             params: vec![],
             param_types: vec![],
             ret: None,
@@ -844,5 +895,93 @@ mod tests {
         // Ordering must be stable so diagnostics sort identically across runs.
         assert!(LangId::PYTHON < LangId::JAVASCRIPT);
         assert!(LangId::JAVASCRIPT < LangId::TYPESCRIPT);
+    }
+    #[test]
+    fn a_bare_decorator_reports_its_name() {
+        // `@property` and `@app.route("/x")` are the same node; the shape of the
+        // expression is what distinguishes them, so no separate flag can drift.
+        let bare = Decorator::new(Expr::path("property", span()), span());
+        assert_eq!(bare.simple_name().map(|n| &**n), Some("property"));
+
+        let called = Decorator::new(
+            Expr::new(
+                ExprKind::Call {
+                    callee: Box::new(Expr::new(
+                        ExprKind::Path(Path::new(vec![name("app"), name("route")])),
+                        span(),
+                    )),
+                    args: vec![Expr::string("/x", span())],
+                    named_args: Vec::new(),
+                },
+                span(),
+            ),
+            span(),
+        );
+        assert_eq!(
+            called.simple_name(),
+            None,
+            "a decorator that is a call is not a plain name"
+        );
+    }
+
+    #[test]
+    fn a_dotted_decorator_is_not_a_simple_name() {
+        let dotted = Decorator::new(
+            Expr::new(
+                ExprKind::Path(Path::new(vec![name("functools"), name("cache")])),
+                span(),
+            ),
+            span(),
+        );
+        assert_eq!(
+            dotted.simple_name(),
+            None,
+            "`functools.cache` must not be mistaken for `cache`"
+        );
+    }
+
+    #[test]
+    fn decorators_keep_source_order() {
+        // Python applies these bottom-up, so the order is load-bearing and must
+        // not be normalised or sorted.
+        let decorator = |text: &str| Decorator::new(Expr::path(text, span()), span());
+        let function = Function {
+            name: name("f"),
+            decorators: vec![decorator("staticmethod"), decorator("lru_cache")],
+            params: vec![],
+            param_types: vec![],
+            ret: None,
+            body: Block::empty(span()),
+            variadic: false,
+            is_async: false,
+            exported: false,
+            generics: Vec::new(),
+            span: span(),
+        };
+
+        let names: Vec<&str> = function
+            .decorators
+            .iter()
+            .filter_map(Decorator::simple_name)
+            .map(|name| &**name)
+            .collect();
+        assert_eq!(names, ["staticmethod", "lru_cache"]);
+    }
+
+    #[test]
+    fn a_class_carries_its_decorators() {
+        let class = Class {
+            name: name("C"),
+            decorators: vec![Decorator::new(Expr::path("dataclass", span()), span())],
+            extends: None,
+            implements: vec![],
+            fields: vec![],
+            methods: vec![],
+            constructors: vec![],
+            generics: vec![],
+            exported: false,
+            span: span(),
+        };
+        assert_eq!(class.decorators.len(), 1);
     }
 }

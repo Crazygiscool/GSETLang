@@ -289,4 +289,114 @@ def f():
             "an unknown extension must not silently fall back to a default"
         );
     }
+    /// Every file in the corpus must parse cleanly.
+    ///
+    /// The corpus exists to drive the lowering, and a corpus file that does not
+    /// parse would make every later failure ambiguous. This is the check that
+    /// keeps the fixtures honest.
+    #[test]
+    fn the_whole_corpus_parses_without_errors() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/py");
+        let mut files: Vec<_> = std::fs::read_dir(&root)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", root.display()))
+            .map(|entry| entry.expect("dir entry").path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "py"))
+            .collect();
+        files.sort();
+
+        assert!(
+            files.len() >= 15,
+            "the plan asks for 15-20 varied files, found {}",
+            files.len()
+        );
+
+        let mut failures = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("read corpus file");
+            let parsed = parse(source_id(), &text).expect("parse");
+            if !parsed.diagnostics.is_empty() {
+                failures.push(format!(
+                    "{}: {:?}",
+                    file.file_name().unwrap().to_string_lossy(),
+                    messages(&parsed.diagnostics)
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "corpus files must parse cleanly:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    /// The corpus must actually cover the audit's defect classes.
+    ///
+    /// Otherwise it is 20 files that happen to compile, and the whole point is
+    /// lost. One representative file per class is required.
+    #[test]
+    fn the_corpus_covers_every_audit_defect_class() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/py");
+        // The manifest lives one level up so the corpus directory holds nothing
+        // but language sources.
+        let manifest = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/MANIFEST.md"),
+        )
+        .expect("corpus manifest");
+
+        // Each mapping line is "<label>: <file>". Split on the last colon so a
+        // label may itself contain colons.
+        let recorded: Vec<(String, String)> = manifest
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .filter_map(|line| {
+                let (label, file) = line.rsplit_once(": ")?;
+                Some((label.trim().to_string(), file.trim().to_string()))
+            })
+            .collect();
+        assert!(
+            !recorded.is_empty(),
+            "the manifest recorded no defect-class mappings at all"
+        );
+
+        let required = [
+            (
+                "class 1: only the first top-level if emitted",
+                "module_shape.py",
+            ),
+            ("class 2: struct and enum vanished", "declarations.py"),
+            ("class 3: ?? has no Go mapping", "null_handling.py"),
+            ("class 5: comprehension passed through", "comprehensions.py"),
+            ("class 6: literal newline in a block lambda", "lambdas.py"),
+            ("class 7: malformed loop header", "loops.py"),
+            ("class 8: interface{} and an undeclared name", "literals.py"),
+            ("class 9: missing import", "imports.py"),
+            ("class 10: integer literal saturates", "numeric_literals.py"),
+            ("class 11: name replaced by nil", "declaration_after_if.py"),
+            ("class 12: untyped parameter", "returns.py"),
+            ("class 13: void method returning a value", "returns.py"),
+            ("class 14: function swallows the module", "returns.py"),
+            ("decorators survive as written", "decorators.py"),
+            ("f-strings keep their shape", "fstrings.py"),
+        ];
+        for (class, file) in required {
+            assert!(
+                recorded
+                    .iter()
+                    .any(|(label, recorded_file)| { label == class && recorded_file == file }),
+                "the manifest does not record {class} -> {file}"
+            );
+            assert!(
+                root.join(file).exists(),
+                "{class} names {file}, which does not exist"
+            );
+        }
+    }
+
+    fn messages(diagnostics: &[Diagnostic]) -> Vec<String> {
+        diagnostics
+            .iter()
+            .map(|diagnostic| format!("{}: {}", diagnostic.code.unwrap_or("?"), diagnostic.message))
+            .collect()
+    }
 }

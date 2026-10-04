@@ -591,6 +591,7 @@ mod tests {
     fn function(name_text: &str, body: Block) -> Function {
         Function {
             name: name(name_text),
+            decorators: Vec::new(),
             params: vec![],
             param_types: vec![],
             ret: None,
@@ -842,6 +843,7 @@ mod tests {
         builder.item(Item::Function(function("Thing", Block::empty(span()))));
         builder.item(Item::Class(Class {
             name: name("Thing"),
+            decorators: Vec::new(),
             extends: None,
             implements: vec![],
             fields: vec![],

@@ -48,8 +48,8 @@ pub use expr::{
     Literal, LogicalOp, NamedArg, Path, Pattern, PatternKind, UnaryOp,
 };
 pub use item::{
-    Class, Enum, Field, Function, Import, ImportKind, ImportedName, Interface, Item, LangId,
-    MethodSignature, Module, ModuleSource, Record, TypeAlias, Variant,
+    Class, Decorator, Enum, Field, Function, Import, ImportKind, ImportedName, Interface, Item,
+    LangId, MethodSignature, Module, ModuleSource, Record, TypeAlias, Variant,
 };
 pub use lower::{Builder, Lowered};
 pub use span::{LineIndex, SourceFile, SourceId, SourceMap, Span};
