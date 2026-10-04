@@ -177,7 +177,7 @@ impl fmt::Debug for Span {
 ///
 /// Offsets rather than a character count per line, because a file with non-ASCII
 /// identifiers is normal and byte offsets are what a slice index needs.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Default, Debug)]
 pub struct LineIndex {
     starts: Vec<u32>,
     len: u32,
@@ -239,6 +239,7 @@ impl LineIndex {
 }
 
 /// A source file registered in a [`SourceMap`].
+#[derive(Clone, Debug)]
 pub struct SourceFile {
     name: String,
     text: String,
@@ -277,7 +278,7 @@ impl SourceFile {
 /// span. Backends and the diagnostic renderer resolve spans back through this
 /// map. Owning the text centrally is what lets a [`Span`] stay 12 bytes and
 /// `Copy` while still pointing at real code.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SourceMap {
     files: Vec<SourceFile>,
 }

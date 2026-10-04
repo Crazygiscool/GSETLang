@@ -8,6 +8,8 @@ use gset_ir::{Diagnostic, LangId, Lowered, SourceId, Span};
 
 use crate::Frontend;
 
+mod lower;
+
 /// The tree-sitter Python grammar.
 ///
 /// Wrapped in a function rather than a constant because building a `Language`
@@ -131,19 +133,8 @@ impl Frontend for Python {
         )
     }
 
-    fn lower(&self, _source: &str, _text: &str) -> Lowered {
-        // Lowering lands next. The parse half is wired up and tested against
-        // real input first, so the grammar is proven before anything is built
-        // on top of it.
-        let mut diagnostics = gset_ir::DiagnosticBag::new();
-        diagnostics.push(Diagnostic::error(
-            Span::synthetic(),
-            "python lowering is not implemented yet",
-        ));
-        Lowered {
-            module: None,
-            diagnostics,
-        }
+    fn lower(&self, source: &str, text: &str) -> Lowered {
+        lower::lower(source, text)
     }
 }
 
@@ -152,6 +143,7 @@ mod tests {
     use super::*;
     use crate::limits::{DEFAULT, Limits};
     use crate::{frontend_by_name, frontend_for_path};
+    use gset_ir::{DiagnosticBag, Item, Stmt};
 
     fn source_id() -> SourceId {
         SourceId::from_raw(0)
@@ -330,6 +322,133 @@ def f():
         );
     }
 
+    /// Every corpus file must lower without error-severity diagnostics.
+    ///
+    /// A fixture that parses but fails to lower means the frontend has a hole,
+    /// which is exactly the state this test exists to catch. Warnings are
+    /// allowed: `imports.py` deliberately names a `__future__` directive and
+    /// relative modules that only `gset-deps` can resolve.
+    #[test]
+    fn the_whole_corpus_lowers_without_errors() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/py");
+        let mut files: Vec<_> = std::fs::read_dir(&root)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", root.display()))
+            .map(|entry| entry.expect("dir entry").path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "py"))
+            .collect();
+        files.sort();
+
+        let mut failures = Vec::new();
+        let mut item_total = 0usize;
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("read corpus file");
+            let name = file.to_string_lossy();
+            let lowered = lower::lower(&name, &text);
+            if let Some(module) = &lowered.module {
+                item_total += module.items.len();
+            }
+            let errors: Vec<_> = lowered
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity.is_error())
+                .map(|diagnostic| {
+                    format!("{}: {}", diagnostic.code.unwrap_or("?"), diagnostic.message)
+                })
+                .collect();
+            if !errors.is_empty() {
+                failures.push(format!(
+                    "{}:\n  {}",
+                    file.file_name().unwrap().to_string_lossy(),
+                    errors.join("\n  ")
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "corpus files must lower without errors:\n{}",
+            failures.join("\n")
+        );
+        assert!(
+            item_total >= files.len(),
+            "each corpus file must lower to at least one item, got {item_total} for {} files",
+            files.len()
+        );
+    }
+
+    /// The constructs added to the IR for Python lower to the new variants.
+    ///
+    /// Pins the round trip for loop `else`, a nested declaration, floored
+    /// division, and `and`/`or`, none of which the IR could express before and
+    /// each of which a frontend could otherwise silently drop.
+    #[test]
+    fn loop_else_closures_floor_division_and_booleans_lower_structurally() {
+        let source = "\
+def outer(flag):
+    def inner(value):
+        return value // 2
+    if flag and inner(4) > 1:
+        return inner
+    return None
+";
+        let lowered = lower::lower("<test>", source);
+        assert!(
+            lowered
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.severity.is_error()),
+            "{:?}",
+            bag_messages(&lowered.diagnostics)
+        );
+
+        let module = lowered.module.expect("a clean source lowers to a module");
+        let body = match module.items.first() {
+            Some(Item::Function(function)) => function.body.clone(),
+            other => panic!("expected a function item, got {other:?}"),
+        };
+        assert!(
+            body.statements
+                .iter()
+                .any(|statement| matches!(statement, Stmt::LocalItem(item) if matches!(item.as_ref(), Item::Function(_)))),
+            "the nested `def` must lower to a local item: {:?}",
+            body
+        );
+
+        let source = "\
+def search(items):
+    for item in items:
+        if item == needle:
+            break
+    else:
+        return None
+    return 1
+";
+        let lowered = lower::lower("<test>", source);
+        assert!(
+            lowered
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.severity.is_error()),
+            "{:?}",
+            bag_messages(&lowered.diagnostics)
+        );
+        let module = lowered.module.expect("a clean source lowers to a module");
+        let body = match module.items.first() {
+            Some(Item::Function(function)) => function.body.clone(),
+            other => panic!("expected a function item, got {other:?}"),
+        };
+        assert!(
+            body.statements.iter().any(|statement| matches!(
+                statement,
+                Stmt::ForIn {
+                    else_body: Some(_),
+                    ..
+                }
+            )),
+            "the loop `else` must survive lowering: {:?}",
+            body
+        );
+    }
+
     /// The corpus must actually cover the audit's defect classes.
     ///
     /// Otherwise it is 20 files that happen to compile, and the whole point is
@@ -413,6 +532,13 @@ def f():
             }
         }
         total
+    }
+
+    fn bag_messages(diagnostics: &DiagnosticBag) -> Vec<String> {
+        diagnostics
+            .iter()
+            .map(|diagnostic| format!("{}: {}", diagnostic.code.unwrap_or("?"), diagnostic.message))
+            .collect()
     }
 
     fn messages(diagnostics: &[Diagnostic]) -> Vec<String> {

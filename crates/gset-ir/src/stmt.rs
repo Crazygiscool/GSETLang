@@ -24,6 +24,7 @@
 //! break without one is how a nested loop silently breaks the wrong loop.
 
 use crate::expr::{Expr, Pattern};
+use crate::item::Item;
 use crate::span::Span;
 use crate::types::{Name, Type};
 
@@ -247,6 +248,12 @@ pub enum Stmt {
         condition: Expr,
         /// The body.
         body: Block,
+        /// The block that runs when the loop ends without `break`.
+        ///
+        /// Python's loop `else`. Kept rather than dropped because it is live
+        /// code: a backend with no equivalent has to synthesise a flag, and it
+        /// cannot do that if the frontend already threw the block away.
+        else_body: Option<Block>,
         /// Where it was written.
         span: Span,
     },
@@ -286,6 +293,9 @@ pub enum Stmt {
         iterable: Expr,
         /// The body.
         body: Block,
+        /// The block that runs when the loop ends without `break`. See
+        /// [`Stmt::While`].
+        else_body: Option<Block>,
         /// Whether the loop may modify the sequence while iterating.
         is_parallel: bool,
         /// A label, for `break`/`continue` targeting this loop.
@@ -330,11 +340,27 @@ pub enum Stmt {
     },
 
     /// A `with` or resource-management block.
+    ///
+    /// One [`Stmt::With`] per resource rather than one per block, because that
+    /// is what the source means: Python's `with a() as x, b() as y` acquires
+    /// `a`, then `b`, and releases them in reverse. A single node with a list of
+    /// resources could not say which body statement each binding is live for.
     With {
         /// The managed resource.
         value: Expr,
+        /// The name the resource is bound to, as Python's `as` clause states it.
+        ///
+        /// Required in practice rather than decorative: `with open(p) as f`
+        /// leaves the body referring to `f`, so a node that dropped the binding
+        /// would produce a body referencing a name that does not exist.
+        binding: Option<Pattern>,
         /// The body.
         body: Block,
+        /// Whether this resource is the last one in its `with` statement.
+        ///
+        /// A backend emitting nested `defer`s needs to know it has reached the
+        /// end, because the release order inverts at the end.
+        is_last: bool,
         /// Where it was written.
         span: Span,
     },
@@ -372,6 +398,18 @@ pub enum Stmt {
         /// Where it was written.
         span: Span,
     },
+
+    /// A declaration that appears inside a body, such as a closure or a local
+    /// class.
+    ///
+    /// A separate variant rather than an [`Item`] pushed into a block, because
+    /// the distinction between "this is a module declaration" and "this is a
+    /// local declaration" is exactly what a scope pass needs, and a `Block` of
+    /// `Item`s would make every statement site answer for imports too.
+    ///
+    /// Boxed because an [`Item`] can itself contain a `Stmt`, and the two
+    /// variants would otherwise be infinitely large.
+    LocalItem(Box<Item>),
 
     /// Something that could not be lowered.
     ///
@@ -423,6 +461,7 @@ impl Stmt {
             | Stmt::Delete { span, .. }
             | Stmt::Yield { span, .. } => *span,
             Stmt::Block(block) => block.span,
+            Stmt::LocalItem(item) => item.span(),
             Stmt::Error { span, .. } => *span,
         }
     }
@@ -476,10 +515,16 @@ impl Stmt {
                 }
             }
             Stmt::While {
-                condition, body, ..
+                condition,
+                body,
+                else_body,
+                ..
             } => {
                 condition.walk(f_expr);
                 body.walk(f_stmt, f_expr);
+                if let Some(else_body) = else_body {
+                    else_body.walk(f_stmt, f_expr);
+                }
             }
             Stmt::DoWhile {
                 body, condition, ..
@@ -506,11 +551,24 @@ impl Stmt {
                 }
                 body.walk(f_stmt, f_expr);
             }
-            Stmt::ForIn { iterable, body, .. } => {
+            Stmt::ForIn {
+                iterable,
+                body,
+                else_body,
+                ..
+            } => {
                 iterable.walk(f_expr);
                 body.walk(f_stmt, f_expr);
+                if let Some(else_body) = else_body {
+                    else_body.walk(f_stmt, f_expr);
+                }
             }
             Stmt::Block(block) => block.walk(f_stmt, f_expr),
+            Stmt::LocalItem(item) => {
+                if let Item::Function(function) = item.as_mut() {
+                    function.body.walk(f_stmt, f_expr);
+                }
+            }
             Stmt::Switch {
                 scrutinee,
                 cases,
@@ -696,6 +754,7 @@ mod tests {
                 },
                 Stmt::While {
                     condition: int("5"),
+                    else_body: None,
                     body: Block::new(vec![Stmt::Expr(int("6"))], span()),
                     span: span(),
                 },

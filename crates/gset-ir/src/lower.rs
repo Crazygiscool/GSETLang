@@ -29,7 +29,7 @@ use std::collections::HashSet;
 use crate::diagnostic::DiagnosticBag;
 use crate::expr::Expr;
 use crate::item::{Item, LangId, Module};
-use crate::span::Span;
+use crate::span::{SourceMap, Span};
 use crate::stmt::{Block, Stmt, VarDecl};
 use crate::types::Name;
 
@@ -74,6 +74,13 @@ pub struct Lowered {
     pub module: Option<Module>,
     /// Everything that went wrong, in discovery order.
     pub diagnostics: DiagnosticBag,
+    /// The text every span in `module` and `diagnostics` indexes into.
+    ///
+    /// Carried here rather than left to the caller because a [`Span`] is only
+    /// a source id and two byte offsets. Without the map, nothing can turn a
+    /// diagnostic into a filename and a line, and a frontend that registered its
+    /// own map privately would force every caller to guess how to join them.
+    pub source_map: SourceMap,
 }
 
 /// Builds and validates a [`Module`].
@@ -94,6 +101,7 @@ pub struct Builder {
     diagnostics: DiagnosticBag,
     /// Expressions seen with no inferred type.
     untyped: usize,
+    source_map: SourceMap,
 }
 
 impl Builder {
@@ -106,6 +114,7 @@ impl Builder {
             declared: HashSet::new(),
             diagnostics: DiagnosticBag::new(),
             untyped: 0,
+            source_map: SourceMap::new(),
         }
     }
 
@@ -234,7 +243,17 @@ impl Builder {
         Lowered {
             module,
             diagnostics: self.diagnostics,
+            source_map: self.source_map,
         }
+    }
+
+    /// Attaches the source text the module's spans refer to.
+    ///
+    /// A frontend registers its text here before finishing, so the returned
+    /// [`Lowered`] is self-contained: a caller can render every diagnostic
+    /// without also having to be handed the map the frontend used.
+    pub fn set_source_map(&mut self, source_map: SourceMap) {
+        self.source_map = source_map;
     }
 
     /// Claims `name` at module scope, reporting a collision if it is taken.
@@ -540,7 +559,31 @@ impl Builder {
                 }
             }
             Stmt::Block(block) => self.check_block(block, flow),
+            // A local declaration is checked like a module one, but its body
+            // runs inside the enclosing function, so the flow keeps its function
+            // and loop counts.
+            Stmt::LocalItem(item) => self.check_local_item(item, flow),
             Stmt::Empty { .. } | Stmt::Error { .. } => {}
+        }
+    }
+
+    /// Checks a declaration nested inside a body.
+    fn check_local_item(&mut self, item: &crate::item::Item, flow: Flow) {
+        match item {
+            crate::item::Item::Function(function) => {
+                self.check_function(function, function.span);
+                self.check_block(&function.body, flow);
+            }
+            crate::item::Item::Class(class) => {
+                for method in class.methods.iter().chain(class.constructors.iter()) {
+                    self.check_function(method, method.span);
+                    self.check_block(&method.body, flow);
+                }
+            }
+            // Imports and other items are not statements, so a `Block` cannot
+            // hold them; a frontend that produced one is reporting at the
+            // construction site instead.
+            _ => {}
         }
     }
 
@@ -638,6 +681,7 @@ mod tests {
             Block::new(
                 vec![Stmt::While {
                     condition: int("1"),
+                    else_body: None,
                     body: Block::new(
                         vec![Stmt::Break {
                             label: None,
@@ -734,6 +778,7 @@ mod tests {
             Block::new(
                 vec![Stmt::While {
                     condition: int("1"),
+                    else_body: None,
                     body: Block::new(
                         vec![Stmt::If {
                             condition: int("1"),
@@ -796,6 +841,7 @@ mod tests {
             Block::new(
                 vec![Stmt::While {
                     condition: int("1"),
+                    else_body: None,
                     body: Block::new(
                         vec![Stmt::If {
                             condition: int("1"),

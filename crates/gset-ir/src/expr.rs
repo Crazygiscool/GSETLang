@@ -60,6 +60,11 @@ pub enum BinaryOp {
     Mul,
     /// `/`
     Div,
+    /// `//`
+    ///
+    /// Floored division. Separate from [`BinaryOp::Div`] because the two differ
+    /// for negative operands and for integers in a target that truncates.
+    FloorDiv,
     /// `%`
     Rem,
     /// `**`
@@ -122,7 +127,7 @@ pub enum LogicalOp {
 }
 
 /// The form a destructuring pattern takes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum PatternKind {
     /// A single name.
     Bind,
@@ -132,6 +137,18 @@ pub enum PatternKind {
     Mapping,
     /// Ignore the value entirely.
     Ignore,
+    /// A computed location: a field or an indexed element of something already
+    /// bound.
+    ///
+    /// [`PatternKind::Bind`] alone could not express `self.count += 1`, and
+    /// dropping the receiver would have silently rebound a local named `count`.
+    /// This is the restricted form of the idea the module docs reject: a
+    /// frontend may only put field accesses and subscripts here, never an
+    /// arbitrary expression, so `f(x) = 1` still has no representation. A
+    /// backend must reject a location it cannot assign to.
+    ///
+    /// The names are empty, because a location binds nothing.
+    Location(Box<Expr>),
 }
 
 /// A target of assignment or binding.
@@ -215,6 +232,16 @@ impl Pattern {
         let mut names = Vec::new();
         self.collect_names(&mut names);
         names
+    }
+
+    /// Creates a pattern assigning into an existing field or element.
+    pub fn location(expr: Expr, span: Span) -> Self {
+        Pattern {
+            kind: PatternKind::Location(Box::new(expr)),
+            names: Vec::new(),
+            subpatterns: Vec::new(),
+            span,
+        }
     }
 
     /// Creates a mapping destructuring pattern.
@@ -573,6 +600,28 @@ pub enum ExprKind {
         condition: Option<Box<Expr>>,
     },
 
+    /// A binding that scopes over a following expression.
+    ///
+    /// Exists because two source constructs need it and neither can be
+    /// faithfully rewritten without it. Python's walrus `(n := f(x))` binds a
+    /// name that is live for the rest of the enclosing statement, and a chained
+    /// comparison `a < b < c` must evaluate its middle operand exactly once.
+    /// Hoisting the walrus into a preceding statement is correct only at
+    /// statement level, and desugaring the chain to two comparisons evaluates the
+    /// middle twice.
+    ///
+    /// Scoped rather than module-wide on purpose: a backend emits it as a
+    /// `let`, and that keeps the temporary out of the enclosing scope where it
+    /// could shadow or collide with a real name.
+    Let {
+        /// What is bound.
+        pattern: Pattern,
+        /// The value bound to it.
+        value: Box<Expr>,
+        /// The expression the binding is live for.
+        body: Box<Expr>,
+    },
+
     /// An interpolated string, such as Python's f-string or JS template
     /// literal.
     ///
@@ -721,6 +770,7 @@ impl Expr {
                 out
             }
             ExprKind::Field { target, .. } => vec![target.as_ref()],
+            ExprKind::Let { value, body, .. } => vec![value.as_ref(), body.as_ref()],
             ExprKind::StructLit { fields, .. } => fields.iter().map(|f| &f.value).collect(),
             ExprKind::List { elements }
             | ExprKind::Tuple { elements }
@@ -824,6 +874,10 @@ impl Expr {
                 }
             }
             ExprKind::Field { target, .. } => target.walk(f),
+            ExprKind::Let { value, body, .. } => {
+                value.walk(f);
+                body.walk(f);
+            }
             ExprKind::StructLit { fields, .. } | ExprKind::Map { entries: fields } => {
                 for field in fields {
                     field.value.walk(f);
