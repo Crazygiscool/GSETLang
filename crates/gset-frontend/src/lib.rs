@@ -27,6 +27,8 @@
 
 use gset_ir::{LangId, Lowered};
 
+pub mod limits;
+
 #[cfg(feature = "python")]
 pub mod python;
 

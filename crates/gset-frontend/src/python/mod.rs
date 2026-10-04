@@ -150,6 +150,7 @@ impl Frontend for Python {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::limits::{DEFAULT, Limits};
     use crate::{frontend_by_name, frontend_for_path};
 
     fn source_id() -> SourceId {
@@ -393,10 +394,204 @@ def f():
         }
     }
 
+    /// Counts nodes of one kind under `node`.
+    ///
+    /// Walking beats counting occurrences in `to_sexp`, where a node's kind also
+    /// appears as its field name.
+    fn count_kind(node: &tree_sitter::Node<'_>, kind: &str) -> usize {
+        let mut total = 0;
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                if cursor.node().kind() == kind {
+                    total += 1;
+                }
+                total += count_kind(&cursor.node(), kind);
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        total
+    }
+
     fn messages(diagnostics: &[Diagnostic]) -> Vec<String> {
         diagnostics
             .iter()
             .map(|diagnostic| format!("{}: {}", diagnostic.code.unwrap_or("?"), diagnostic.message))
             .collect()
+    }
+    /// Go's `TestParseIndexExpression` and `TestParseChainedIndexExpression`.
+    ///
+    /// Ported because a subscript is the shape most likely to be mis-lowered: it
+    /// is an index into a list in one target and a hash lookup in another, and
+    /// the two must not be confused. The Go test asserted on a re-rendered
+    /// string; here the structure is asserted instead, because a string
+    /// comparison would only prove the emitter round-trips.
+    #[test]
+    fn subscripts_and_chained_subscripts_parse() {
+        let source = "nums = [1, 2, 3]
+print(nums[0])
+print(nums[1] + nums[2])
+matrix = [[1, 2], [3, 4]]
+print(matrix[1][0])
+print(grid[0][1][2])
+";
+        let parsed = parse_ok(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let sexp = parsed.tree.root_node().to_sexp();
+
+        // Count real nodes: `to_sexp` also prints `subscript:` as a field
+        // name, so counting occurrences would double every one.
+        assert_eq!(
+            count_kind(&parsed.tree.root_node(), "subscript"),
+            8,
+            "expected eight subscript nodes (1+1+1+2+3) in:\n{sexp}"
+        );
+        // The chained ones really are nested, not flattened.
+        assert!(
+            sexp.contains("subscript value: (subscript"),
+            "matrix[1][0] must nest its subscripts:\n{sexp}"
+        );
+        assert!(
+            sexp.contains("subscript value: (subscript value: (subscript"),
+            "grid[0][1][2] must nest three deep:\n{sexp}"
+        );
+    }
+
+    /// Go's `TestVariableDeclarationIsDeclared`.
+    ///
+    /// The intent was that a declaration is recognised as a declaration. Here
+    /// that means each annotated assignment and each `def` is an item rather
+    /// than a bare expression statement, which is the split `gset-semantic`
+    /// depends on and the thing defect class 14 lost when a trailing statement
+    /// was absorbed into the function above it.
+    #[test]
+    fn declarations_are_recognised_as_declarations() {
+        let source = concat!(
+            "x = 1\n",
+            "y: int = 2\n",
+            "def f():\n",
+            "    return 1\n",
+            "\n",
+            "class C:\n",
+            "    pass\n",
+            "z = 3\n",
+        );
+        let parsed = parse_ok(source);
+        let root = parsed.tree.root_node();
+
+        // Top-level kinds, in source order. An `expression_statement` wrapping
+        // an `assignment` that has a `type` field is an annotated declaration.
+        fn classify(node: tree_sitter::Node<'_>) -> String {
+            let annotated = node.named_child(0).is_some_and(|child| {
+                child.kind() == "assignment" && child.child_by_field_name("type").is_some()
+            });
+            if annotated {
+                "annotated_decl".to_string()
+            } else {
+                node.kind().to_string()
+            }
+        }
+
+        let top_level: Vec<String> = {
+            let mut cursor = root.walk();
+            let mut kinds = Vec::new();
+            if cursor.goto_first_child() {
+                loop {
+                    if cursor.node().is_named() {
+                        kinds.push(classify(cursor.node()));
+                    }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+            kinds
+        };
+
+        assert_eq!(
+            top_level,
+            [
+                "expression_statement",
+                "annotated_decl",
+                "function_definition",
+                "class_definition",
+                "expression_statement"
+            ],
+            "the annotated assignment must be distinguishable from a bare one"
+        );
+    }
+
+    /// Go's `TestParseGarbageBlockTerminatesWithError`.
+    ///
+    /// The Go test needed a 5 second watchdog and could hang. This asserts the
+    /// same thing without a watchdog: parsing malformed input must produce a
+    /// diagnostic, promptly, and never panic.
+    #[test]
+    fn malformed_input_produces_a_diagnostic_and_never_panics() {
+        for source in [
+            "export add(a, b) {",
+            "def f(:\n    pass\n",
+            "class ???\n",
+            "x = = 1",
+            "if:\n",
+            "@\n",
+            "(((((((",
+            "\"\"unterminated",
+            "def f(\n",
+            "lambda\n",
+            "x = [1, 2\n",
+        ] {
+            let parsed = parse(source_id(), source).expect("a tree is always produced");
+            assert!(
+                parsed.tree.root_node().has_error() || !parsed.diagnostics.is_empty(),
+                "expected a problem to be reported for:\n{source}"
+            );
+        }
+    }
+
+    /// Go's `TestParseMatchDoesNotHang`, `TestParseTryCatchDoesNotHang` and
+    /// `TestParseListComprehensionDoesNotHang`.
+    ///
+    /// Those constructs had a parser that could loop forever. tree-sitter
+    /// guarantees termination, so what is worth asserting is that the shapes are
+    /// recognised and bounded by the depth limit.
+    #[test]
+    fn the_constructs_that_once_hung_are_bounded() {
+        let source = concat!(
+            "match x:\n",
+            "    case 1:\n",
+            "        print('one')\n",
+            "    case _:\n",
+            "        print('other')\n",
+            "\n",
+            "try:\n",
+            "    risky()\n",
+            "except ValueError:\n",
+            "    pass\n",
+            "finally:\n",
+            "    done()\n",
+            "\n",
+            "squared = [n * n for n in nums]\n",
+            "evens = [n for n in nums if n % 2 == 0]\n",
+        );
+        let parsed = parse_ok(source);
+        let root = parsed.tree.root_node();
+        let sexp = root.to_sexp();
+        for kind in [
+            "match_statement",
+            "case_clause",
+            "try_statement",
+            "except_clause",
+            "finally_clause",
+            "list_comprehension",
+        ] {
+            assert!(sexp.contains(kind), "missing {kind} in:\n{sexp}");
+        }
+        assert!(
+            Limits::depth_of(&root) <= DEFAULT.max_depth,
+            "these constructs must stay within the depth limit"
+        );
     }
 }
