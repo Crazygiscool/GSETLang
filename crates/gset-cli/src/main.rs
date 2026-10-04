@@ -44,11 +44,14 @@ enum Command {
         /// Source file to transpile
         path: PathBuf,
         /// Target language to emit
-        #[arg(long, short = 't', default_value = "go")]
+        #[arg(long, short = 't', visible_alias = "target", default_value = "go")]
         to: String,
         /// Source language, overriding the one inferred from the extension
         #[arg(long, short = 'f')]
         from: Option<String>,
+        /// Write the result here instead of to stdout
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
         /// Print diagnostics even when there are none
         #[arg(long)]
         verbose: bool,
@@ -58,7 +61,7 @@ enum Command {
         /// Source file to transpile and run
         path: PathBuf,
         /// Target language to emit before running
-        #[arg(long, short = 't', default_value = "go")]
+        #[arg(long, short = 't', visible_alias = "target", default_value = "go")]
         to: String,
         /// Source language, overriding the one inferred from the extension
         #[arg(long, short = 'f')]
@@ -67,6 +70,8 @@ enum Command {
         #[arg(long)]
         keep: bool,
     },
+    /// Print the version
+    Version,
 }
 
 fn main() -> ExitCode {
@@ -77,18 +82,29 @@ fn main() -> ExitCode {
             path,
             to,
             from,
+            output,
             verbose,
-        } => transpile_command(&path, &to, from.as_deref(), verbose),
+        } => transpile_command(&path, &to, from.as_deref(), output.as_deref(), verbose),
         Command::Run {
             path,
             to,
             from,
             keep,
         } => run_command(&path, &to, from.as_deref(), keep),
+        Command::Version => {
+            println!("GSET v{}", env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
+        }
     }
 }
 
-fn transpile_command(path: &Path, target: &str, from: Option<&str>, verbose: bool) -> ExitCode {
+fn transpile_command(
+    path: &Path,
+    target: &str,
+    from: Option<&str>,
+    destination: Option<&Path>,
+    verbose: bool,
+) -> ExitCode {
     let output = match load(path, target, from) {
         Ok(output) => output,
         Err(code) => return code,
@@ -96,9 +112,17 @@ fn transpile_command(path: &Path, target: &str, from: Option<&str>, verbose: boo
 
     report(&output, verbose);
 
-    // Generated code is printed even on failure, because partial output is how
+    // Generated code is written even on failure, because partial output is how
     // a user sees what did translate; the exit code still reflects the errors.
-    print!("{}", output.text);
+    match destination {
+        Some(destination) => {
+            if let Err(error) = std::fs::write(destination, &output.text) {
+                eprintln!("gset: cannot write {}: {error}", destination.display());
+                return ExitCode::from(1);
+            }
+        }
+        None => print!("{}", output.text),
+    }
 
     if output.failed {
         ExitCode::from(1)

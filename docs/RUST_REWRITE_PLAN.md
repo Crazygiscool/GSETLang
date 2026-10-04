@@ -199,6 +199,13 @@ Rust is **45 % faster** already, on a CLI that does not yet parse anything. The
 gap should widen: Go links and initialises the whole emitter, and Rust will not
 load a grammar until a language is known.
 
+Re-measured on the complete M1 pipeline (Python grammar linked, Go backend, 200
+invocations of `gset version`, `scripts/measure-startup.sh`): **median 1.86 ms,
+p90 2.63 ms, min 1.32 ms**. Linking the grammar did not cost startup, because
+parsing is behind a `OnceLock` that `version` never touches. That is the first
+real confirmation of the feature-gating decision in §6, and it clears the M1
+budget.
+
 The Go figure also depends on the working directory, because `LoadConfig("")`
 resolves against `os.Getwd()` and runs before argument parsing:
 
