@@ -257,8 +257,13 @@ Guardrail that paid off immediately: every corpus file is asserted to contain no
 `ExprKind::Error`, because an error placeholder reports nothing on its own. That
 check found four latent lowering bugs (single-character comparison operators,
 positional `conditional_expression` operands) that the "no error diagnostics"
-check had masked. Remaining M1 work: the full corpus gate across the common
-subset, and startup benchmarking.
+check had masked.
+
+`gset run` is also wired: it transpiles, writes the generated file to a
+per-invocation temp directory, invokes the target runtime (`go run`), propagates
+the child's exit code, and deletes the directory unless `--keep` is passed.
+Remaining M1 work: the full corpus gate across the common subset, and startup
+benchmarking.
 
 Two decisions taken while building the IR, both recorded in the code:
 

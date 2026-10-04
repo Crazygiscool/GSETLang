@@ -17,9 +17,12 @@
 //! which resolved against `os.Getwd()` and read the first `gset.conf` found on
 //! disk, before it had even looked at the arguments.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, ExitCode};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
+use gset_backend::TargetId;
 use gset_cli::{Output, PipelineError, transpile};
 
 #[derive(Parser, Debug)]
@@ -60,10 +63,13 @@ enum Command {
         /// Source language, overriding the one inferred from the extension
         #[arg(long, short = 'f')]
         from: Option<String>,
+        /// Keep the generated file instead of deleting it after the run
+        #[arg(long)]
+        keep: bool,
     },
 }
 
-fn main() -> std::process::ExitCode {
+fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
@@ -73,35 +79,19 @@ fn main() -> std::process::ExitCode {
             from,
             verbose,
         } => transpile_command(&path, &to, from.as_deref(), verbose),
-        Command::Run { path, to, from } => {
-            eprintln!("gset: run is not implemented yet (milestone 1).");
-            let _ = (path, to, from);
-            std::process::ExitCode::from(1)
-        }
+        Command::Run {
+            path,
+            to,
+            from,
+            keep,
+        } => run_command(&path, &to, from.as_deref(), keep),
     }
 }
 
-fn transpile_command(
-    path: &PathBuf,
-    target: &str,
-    from: Option<&str>,
-    verbose: bool,
-) -> std::process::ExitCode {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) => {
-            eprintln!("gset: cannot read {}: {error}", path.display());
-            return std::process::ExitCode::from(1);
-        }
-    };
-    let name = path.to_string_lossy();
-
-    let output = match transpile(&name, &text, from, target) {
+fn transpile_command(path: &Path, target: &str, from: Option<&str>, verbose: bool) -> ExitCode {
+    let output = match load(path, target, from) {
         Ok(output) => output,
-        Err(error) => {
-            print_pipeline_error(&error);
-            return std::process::ExitCode::from(2);
-        }
+        Err(code) => return code,
     };
 
     report(&output, verbose);
@@ -111,9 +101,112 @@ fn transpile_command(
     print!("{}", output.text);
 
     if output.failed {
-        std::process::ExitCode::from(1)
+        ExitCode::from(1)
     } else {
-        std::process::ExitCode::SUCCESS
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_command(path: &Path, target: &str, from: Option<&str>, keep: bool) -> ExitCode {
+    let output = match load(path, target, from) {
+        Ok(output) => output,
+        Err(code) => return code,
+    };
+    report(&output, false);
+    if output.failed {
+        // For `run` the generated source is not the product, so it goes to
+        // stderr where it explains the failure without polluting stdout.
+        eprint!("{}", output.text);
+        return ExitCode::from(1);
+    }
+
+    let Some(id) = TargetId::from_name(target) else {
+        eprintln!("gset: `{target}` is not a target this build understands");
+        return ExitCode::from(2);
+    };
+    let Some(mut command) = runtime_command(id) else {
+        eprintln!("gset: running {id} is not supported yet");
+        return ExitCode::from(2);
+    };
+
+    let directory = temp_directory(path);
+    if let Err(error) = std::fs::create_dir_all(&directory) {
+        eprintln!("gset: cannot create {}: {error}", directory.display());
+        return ExitCode::from(1);
+    }
+    let program = directory.join(format!("program.{}", id.extension()));
+    if let Err(error) = std::fs::write(&program, &output.text) {
+        eprintln!("gset: cannot write {}: {error}", program.display());
+        return ExitCode::from(1);
+    }
+
+    command.arg(&program);
+    let code = match command.status() {
+        Ok(status) => ExitCode::from(
+            status
+                .code()
+                .filter(|code| (0..=255).contains(code))
+                .unwrap_or(1) as u8,
+        ),
+        Err(error) => {
+            eprintln!("gset: cannot run {id}: {error}");
+            ExitCode::from(127)
+        }
+    };
+
+    if keep {
+        eprintln!("gset: kept {}", program.display());
+    } else {
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+    code
+}
+
+/// The runtime invocation for a target, before the generated file is appended.
+fn runtime_command(target: TargetId) -> Option<ProcessCommand> {
+    match target {
+        TargetId::GO => {
+            let mut command = ProcessCommand::new("go");
+            command.arg("run");
+            Some(command)
+        }
+        _ => None,
+    }
+}
+
+/// A per-invocation directory under the system temp directory.
+///
+/// The name includes the process id and a nanosecond timestamp so two `gset`
+/// processes never collide, and includes the source stem so a `--keep` run
+/// leaves a recognisable directory.
+fn temp_directory(source: &Path) -> PathBuf {
+    let stem = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("gset");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("gset-{stem}-{}-{nanos}", std::process::id()))
+}
+
+fn load(path: &Path, target: &str, from: Option<&str>) -> Result<Output, ExitCode> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("gset: cannot read {}: {error}", path.display());
+            return Err(ExitCode::from(1));
+        }
+    };
+    let name = path.to_string_lossy();
+
+    match transpile(&name, &text, from, target) {
+        Ok(output) => Ok(output),
+        Err(error) => {
+            print_pipeline_error(&error);
+            Err(ExitCode::from(2))
+        }
     }
 }
 

@@ -78,6 +78,29 @@ fn fib_go_is_accepted_by_the_go_toolchain() {
     }
 }
 
+#[test]
+fn run_transpiles_then_executes_on_the_go_runtime() {
+    if !tool_starts("go", "version") {
+        eprintln!("go not on PATH; skipping the `run` end-to-end test");
+        return;
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_gset"))
+        .arg("run")
+        .arg(workspace().join("tests/corpus/py/fib.py"))
+        .output()
+        .expect("spawn gset");
+    assert!(
+        output.status.success(),
+        "gset run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "55",
+        "the program's output should reach stdout"
+    );
+}
+
 /// Whether `tool` can be started with `probe`.
 ///
 /// A nonzero exit is fine; only a failure to start (the tool is missing) is
