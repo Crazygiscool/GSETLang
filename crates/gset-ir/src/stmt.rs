@@ -322,7 +322,10 @@ pub enum Stmt {
     /// A `throw` or `raise`.
     Throw {
         /// The thrown value.
-        value: Expr,
+        ///
+        /// `None` is a bare re-throw: Python's `raise`, C#'s `throw;`, which
+        /// propagates the active exception rather than naming a new one.
+        value: Option<Expr>,
         /// Where it was written.
         span: Span,
     },
@@ -493,7 +496,12 @@ impl Stmt {
                     value.walk(f_expr);
                 }
             }
-            Stmt::Throw { value, .. } | Stmt::Defer { expr: value, .. } => value.walk(f_expr),
+            Stmt::Throw { value, .. } => {
+                if let Some(value) = value {
+                    value.walk(f_expr);
+                }
+            }
+            Stmt::Defer { expr, .. } => expr.walk(f_expr),
             Stmt::Delete { target, .. } => target.walk(f_expr),
             Stmt::Break { .. } | Stmt::Continue { .. } => {}
             Stmt::If {

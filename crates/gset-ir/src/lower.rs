@@ -433,8 +433,11 @@ impl Builder {
                     self.check_expr(value);
                 }
             }
-            Stmt::Throw { value, .. }
-            | Stmt::Defer { expr: value, .. }
+            Stmt::Throw {
+                value: Some(value), ..
+            } => self.check_expr(value),
+            Stmt::Throw { value: None, .. } => {}
+            Stmt::Defer { expr: value, .. }
             | Stmt::Delete { target: value, .. }
             | Stmt::Expr(value)
             | Stmt::Assign { value, .. } => self.check_expr(value),

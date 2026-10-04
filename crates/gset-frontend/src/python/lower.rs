@@ -696,21 +696,11 @@ impl<'a> Lowerer<'a> {
                 vec![Stmt::Return { value, span }]
             }
             "raise_statement" => {
-                // `raise` with no operand re-raises the active exception, which
-                // is not an expression in Python. Reporting beats inventing one.
-                let Some(value) = node.named_child(0) else {
-                    return vec![Stmt::Throw {
-                        value: Expr::error(
-                            "bare `raise` re-raises the active exception and has no equivalent here",
-                            span,
-                        ),
-                        span,
-                    }];
-                };
-                vec![Stmt::Throw {
-                    value: self.expr(value),
-                    span,
-                }]
+                // `raise` with no operand re-raises the active exception. That
+                // is a re-throw, not an expression, so the IR carries `None`
+                // rather than inventing an operand.
+                let value = node.named_child(0).map(|n| self.expr(n));
+                vec![Stmt::Throw { value, span }]
             }
             "break_statement" => {
                 if self.loop_depth == 0 {
@@ -1725,14 +1715,17 @@ impl<'a> Lowerer<'a> {
 
             // -------------------------------------------------------- control
             "conditional_expression" => {
-                let condition = node
-                    .child_by_field_name("condition")
-                    .map(|n| self.expr(n))
-                    .unwrap_or_else(|| Expr::error("conditional has no condition", span));
+                // `a if b else c`: the grammar exposes no field names here, so
+                // the three operands are positional. The middle named child is
+                // the condition, not the second operand in reading order.
                 let then_branch = node
                     .named_child(0)
                     .map(|n| self.expr(n))
                     .unwrap_or_else(|| Expr::error("conditional has no true branch", span));
+                let condition = node
+                    .named_child(1)
+                    .map(|n| self.expr(n))
+                    .unwrap_or_else(|| Expr::error("conditional has no condition", span));
                 let else_branch = node
                     .named_child(2)
                     .map(|n| self.expr(n))
@@ -1860,14 +1853,19 @@ impl<'a> Lowerer<'a> {
     /// equivalent when the middle operand cannot have side effects. A warning
     /// says so when it might.
     fn comparison(&mut self, node: tree_sitter::Node<'_>, span: Span) -> Expr {
-        let operands: Vec<_> = named_children(node)
-            .into_iter()
-            .filter(|child| child.is_named())
-            .collect();
-        let operators: Vec<_> = named_children(node)
-            .into_iter()
-            .filter(|child| !child.is_named() && child.kind().len() > 1)
-            .collect();
+        // Operands are the named children; operators are the unnamed ones that
+        // `comparison_op` recognises. Some operators (`<`, `>`) are a single
+        // character, so length cannot be used to tell them from punctuation.
+        let mut operands = Vec::new();
+        let mut operators = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.is_named() {
+                operands.push(child);
+            } else if self.comparison_op(child).is_some() {
+                operators.push(child);
+            }
+        }
 
         if operands.len() == 2 && operators.len() == 1 {
             let Some(op) = self.comparison_op(operators[0]) else {

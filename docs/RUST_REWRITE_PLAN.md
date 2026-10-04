@@ -244,10 +244,21 @@ M1, covering the constructs the audit says the Go emitter handled. Without it th
 syntax-check gate has nothing to run.
 
 Done so far: the IR is complete for M1's needs (spans, diagnostics, types,
-expressions, statements, items and module, and a validating lowering builder),
-and the Python grammar is wired behind a `python` feature with the `Frontend`
-trait and registry in place. The Python lowering itself is the next step, and
-`gset transpile` still does nothing.
+expressions, statements, items and module, and a validating lowering builder);
+the Python grammar is wired behind a `python` feature with the `Frontend` trait
+and registry; the Python frontend lowers the whole `tests/corpus/py/` set
+without an error expression; the Go backend (via a centralised `CodeWriter`,
+a `Backend` trait and a target/capability registry) emits a complete runnable
+file; and `gset transpile --to go` is wired end to end. The gate is exercised by
+`crates/gset-cli/tests/go_gate.rs`: `tests/corpus/py/fib.py` emits
+`tests/golden/fib.go`, which `gofmt` and `go vet` accept.
+
+Guardrail that paid off immediately: every corpus file is asserted to contain no
+`ExprKind::Error`, because an error placeholder reports nothing on its own. That
+check found four latent lowering bugs (single-character comparison operators,
+positional `conditional_expression` operands) that the "no error diagnostics"
+check had masked. Remaining M1 work: the full corpus gate across the common
+subset, and startup benchmarking.
 
 Two decisions taken while building the IR, both recorded in the code:
 

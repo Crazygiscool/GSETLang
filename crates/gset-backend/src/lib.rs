@@ -42,3 +42,12 @@
 //! Per-target indentation belongs to the backend's configuration.
 
 #![forbid(unsafe_code)]
+
+mod backend;
+mod go;
+mod target;
+mod writer;
+
+pub use backend::{Backend, Emitted, backend_by_name, backend_for, emit};
+pub use target::{Capability, Support, TargetId};
+pub use writer::CodeWriter;

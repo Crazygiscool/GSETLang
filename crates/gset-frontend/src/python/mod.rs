@@ -143,7 +143,7 @@ mod tests {
     use super::*;
     use crate::limits::{DEFAULT, Limits};
     use crate::{frontend_by_name, frontend_for_path};
-    use gset_ir::{DiagnosticBag, Item, Stmt};
+    use gset_ir::{DiagnosticBag, Item, Lowered, Stmt};
 
     fn source_id() -> SourceId {
         SourceId::from_raw(0)
@@ -343,11 +343,11 @@ def f():
         for file in &files {
             let text = std::fs::read_to_string(file).expect("read corpus file");
             let name = file.to_string_lossy();
-            let lowered = lower::lower(&name, &text);
+            let mut lowered = lower::lower(&name, &text);
             if let Some(module) = &lowered.module {
                 item_total += module.items.len();
             }
-            let errors: Vec<_> = lowered
+            let mut errors: Vec<_> = lowered
                 .diagnostics
                 .iter()
                 .filter(|diagnostic| diagnostic.severity.is_error())
@@ -355,6 +355,15 @@ def f():
                     format!("{}: {}", diagnostic.code.unwrap_or("?"), diagnostic.message)
                 })
                 .collect();
+            // An `Expr::Error` is lowering's recovery placeholder. It reports
+            // nothing on its own, so a construct that silently became one would
+            // otherwise pass this test. Any error expression is a bug.
+            let error_expressions = count_error_expressions(&mut lowered);
+            if error_expressions > 0 {
+                errors.push(format!(
+                    "{error_expressions} expression(s) lowered to an error placeholder"
+                ));
+            }
             if !errors.is_empty() {
                 failures.push(format!(
                     "{}:\n  {}",
@@ -539,6 +548,33 @@ def search(items):
             .iter()
             .map(|diagnostic| format!("{}: {}", diagnostic.code.unwrap_or("?"), diagnostic.message))
             .collect()
+    }
+
+    /// Counts the expressions that lowered to [`gset_ir::ExprKind::Error`].
+    fn count_error_expressions(lowered: &mut Lowered) -> usize {
+        let Some(module) = lowered.module.as_mut() else {
+            return 0;
+        };
+        let mut count = 0usize;
+        let mut on_expr = |expr: &mut gset_ir::Expr| {
+            if expr.is_error() {
+                count += 1;
+            }
+        };
+        let mut on_stmt = |_statement: &mut Stmt| {};
+        for item in &mut module.items {
+            match item {
+                Item::Function(function) => function.body.walk(&mut on_stmt, &mut on_expr),
+                Item::Global(global) => {
+                    if let Some(value) = global.value.as_mut() {
+                        value.walk(&mut on_expr);
+                    }
+                }
+                Item::Stmt(statement) => statement.walk_into(&mut on_stmt, &mut on_expr),
+                _ => {}
+            }
+        }
+        count
     }
 
     fn messages(diagnostics: &[Diagnostic]) -> Vec<String> {
