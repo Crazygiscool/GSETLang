@@ -2,9 +2,9 @@
 //!
 //! Kept out of `main.rs` so it can be exercised directly by tests without
 //! spawning the binary. The pipeline is deliberately small: choose a frontend
-//! from the source, lower to the IR, choose a backend from the target, emit.
-//! `gset-semantic` slots in between once it exists, and nothing before or after
-//! it needs to change.
+//! from the source, lower to the IR, infer types, choose a backend from the
+//! target, emit. Inferring in the middle is what lets a backend emit a type for
+//! a binding the source left untyped instead of reaching for a default.
 
 use std::path::Path;
 
@@ -57,7 +57,7 @@ pub fn transpile(
     let source_map = lowered.source_map;
     let mut diagnostics = lowered.diagnostics;
 
-    let Some(module) = lowered.module else {
+    let Some(mut module) = lowered.module else {
         return Ok(Output {
             text: String::new(),
             diagnostics,
@@ -65,6 +65,8 @@ pub fn transpile(
             failed: true,
         });
     };
+
+    diagnostics.extend(gset_semantic::infer(&mut module));
 
     let backend =
         backend_by_name(target).ok_or_else(|| PipelineError::UnknownBackend(target.to_string()))?;

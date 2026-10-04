@@ -2355,13 +2355,14 @@ impl<'a> Lowerer<'a> {
             .to_ascii_lowercase();
         let is_fstring = prefix.contains('f');
         let is_bytes = prefix.contains('b');
-        // Content and interpolations only exist for f-strings. A plain string has
-        // them as children too when the grammar produces them, but it has no
-        // interpolation, so the whole thing is one segment.
-        let interpolated = node
-            .named_child(0)
-            .map(|child| child.kind() == "string")
-            .unwrap_or(false);
+        // The grammar puts `string_start`, the content and an `interpolation`
+        // per hole directly under the `string` node; there is no nested wrapper.
+        // An f-string with no holes has no `interpolation` and is a plain
+        // literal, so the presence of one is what distinguishes the two paths.
+        let interpolated = (0..node.child_count()).any(|index| {
+            node.child(index)
+                .is_some_and(|child| child.kind() == "interpolation")
+        });
 
         if !is_fstring || !interpolated {
             let text = self.string_body(node);
@@ -2380,8 +2381,7 @@ impl<'a> Lowerer<'a> {
         let mut current = String::new();
         let mut specifiers: Vec<String> = Vec::new();
 
-        let inner = node.named_child(0).unwrap_or(node);
-        for child in named_children(inner) {
+        for child in named_children(node) {
             match child.kind() {
                 "string_start" | "string_end" => {}
                 "string_content" => current.push_str(self.text_of(child)),
@@ -2461,8 +2461,7 @@ impl<'a> Lowerer<'a> {
     /// a frontend that decoded here would have to re-encode on the way out.
     fn string_body(&self, node: tree_sitter::Node<'_>) -> String {
         let mut out = String::new();
-        let inner = node.named_child(0).unwrap_or(node);
-        for child in named_children(inner) {
+        for child in named_children(node) {
             match child.kind() {
                 "string_start" | "string_end" => {}
                 "string_content" | "escape_sequence" => out.push_str(self.text_of(child)),

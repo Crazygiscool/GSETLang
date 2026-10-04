@@ -33,3 +33,7 @@
 //! of all of them.
 
 #![forbid(unsafe_code)]
+
+mod infer;
+
+pub use infer::infer;

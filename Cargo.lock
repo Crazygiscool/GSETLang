@@ -215,6 +215,7 @@ dependencies = [
 name = "gset-semantic"
 version = "0.1.0"
 dependencies = [
+ "gset-frontend",
  "gset-ir",
  "rayon",
 ]

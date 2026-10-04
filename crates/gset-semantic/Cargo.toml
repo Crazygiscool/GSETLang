@@ -11,3 +11,6 @@ authors.workspace = true
 [dependencies]
 gset-ir = { workspace = true }
 rayon = { workspace = true }
+
+[dev-dependencies]
+gset-frontend = { workspace = true }

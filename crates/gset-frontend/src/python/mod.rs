@@ -458,6 +458,48 @@ def search(items):
         );
     }
 
+    /// A string literal keeps its content, and an f-string keeps its holes.
+    ///
+    /// These are separate failures with one cause: the grammar puts the parts of
+    /// a string directly under the `string` node, and an earlier version walked a
+    /// child that does not exist for a plain string. That made every literal
+    /// empty and turned every f-string into an empty literal, losing both the
+    /// text and the interpolation.
+    #[test]
+    fn string_literals_keep_their_content_and_f_strings_keep_their_holes() {
+        let lowered = lower::lower("<test>", "x = \"hi\"\ny = f\"a{b}c\"\n");
+        assert!(
+            lowered
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.severity.is_error()),
+            "{:?}",
+            bag_messages(&lowered.diagnostics)
+        );
+        let module = lowered.module.expect("a clean source lowers to a module");
+        let mut values = module.items.iter().filter_map(|item| match item {
+            Item::Global(global) => global.value.as_ref(),
+            _ => None,
+        });
+
+        match &values.next().expect("`x` has a value").kind {
+            gset_ir::ExprKind::Literal(gset_ir::Literal::Str(text)) => assert_eq!(text, "hi"),
+            other => panic!("expected a string literal, got {other:?}"),
+        }
+
+        match &values.next().expect("`y` has a value").kind {
+            gset_ir::ExprKind::Format {
+                segments,
+                arguments,
+                ..
+            } => {
+                assert_eq!(segments, &["a".to_string(), "c".to_string()]);
+                assert_eq!(arguments.len(), 1);
+            }
+            other => panic!("expected a format expression, got {other:?}"),
+        }
+    }
+
     /// The corpus must actually cover the audit's defect classes.
     ///
     /// Otherwise it is 20 files that happen to compile, and the whole point is

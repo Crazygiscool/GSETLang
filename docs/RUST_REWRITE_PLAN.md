@@ -310,6 +310,22 @@ Java: none of it can survive this gate.
   `Unknown` propagation.
 - Property test: `IR → python → IR` semantic equivalence.
 
+Done so far: `gset-semantic` has a conservative inference pass and the CLI runs it
+between lowering and emission. It resolves lexical scopes — a function-local
+binding shadows a module-level one rather than widening it — and fills `Expr.ty`,
+`VarDecl.ty` and `Function.ret` from literals, annotations, arithmetic,
+builtin and user-function calls, and the elements of collections and
+comprehensions. Where the source is genuinely dynamic the type stays
+`Type::Unknown` and propagates. It also reads the module's `LangId` for the one
+operator whose meaning differs by language: Python's `/` is true division, so
+`int / int` infers `float`.
+
+The pass exposed a frontend defect it then fixed: the grammar puts a string's
+parts directly under the `string` node, and the lowering walked a child that only
+exists in an older grammar. Every literal therefore lowered to empty text and
+every f-string to an empty literal. `string_body` now walks the real children and
+an f-string is detected by an `interpolation` child.
+
 ### M3 — Frontend breadth
 
 Go, Java, Ruby, then C/C++ and Rust. Each is a grammar dependency plus a lowering
