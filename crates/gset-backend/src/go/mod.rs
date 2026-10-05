@@ -21,12 +21,12 @@
 //! `print(...)` where it appeared would be a Go syntax error, which is the
 //! class of defect the M2 gate exists to catch.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use gset_ir::{
-    BinaryOp, Block, ComparisonOp, ComprehensionKind, Else, Expr, ExprKind, Function, Import, Item,
-    Literal, LogicalOp, Module, NamedArg, Pattern, PatternKind, SourceMap, Span, Stmt, Type,
-    UnaryOp, VarDecl,
+    BinaryOp, Block, ComparisonOp, ComprehensionKind, Else, Expr, ExprKind, Function, Import,
+    ImportKind, Item, Literal, LogicalOp, Module, NamedArg, Pattern, PatternKind, SourceMap, Span,
+    Stmt, Type, UnaryOp, VarDecl,
 };
 
 use crate::backend::{Backend, unsupported};
@@ -152,6 +152,13 @@ struct Emitter<'a> {
     globals: HashSet<String>,
     /// Names declared in the current function scope.
     locals: HashSet<String>,
+    /// The declared type of each annotated parameter of the current function.
+    ///
+    /// Python states a parameter's type in the source, so a use of that
+    /// parameter inside the body has a type without any inference having to
+    /// rediscover it. Inference does not flow that far yet, so this is where the
+    /// emitter looks before deciding a value is dynamic.
+    param_types: HashMap<String, Type>,
     /// Whether the current function returns a value, which decides whether a
     /// bare `return` becomes `return nil`.
     returns_value: bool,
@@ -171,6 +178,19 @@ struct Emitter<'a> {
     /// loop restores the distinction, and it has to be threaded through the
     /// body because that is where the `break`s are.
     loop_else_flags: Vec<String>,
+    /// Every name the module binds somewhere, so a call can be told apart from
+    /// a name that was never defined.
+    ///
+    /// The set is a whole-module approximation on purpose: it over-approximates,
+    /// so a call to a name bound in some other scope still emits. Under-claiming
+    /// would report a program that is fine, and a false report is as wrong as a
+    /// false silence.
+    declared: HashSet<String>,
+    /// Imports this backend dropped because Go has no equivalent.
+    ///
+    /// The name is recorded rather than forgotten, so a use of it reports the
+    /// import instead of emitting a call to something that was never defined.
+    dropped_imports: HashSet<String>,
     /// Whether the expression being emitted is a statement of its own.
     ///
     /// Python's mutating methods return `None` but Go's equivalent returns the
@@ -190,8 +210,11 @@ impl<'a> Emitter<'a> {
             main_statements: Vec::new(),
             globals: HashSet::new(),
             locals: HashSet::new(),
+            param_types: HashMap::new(),
             returns_value: false,
             loop_else_flags: Vec::new(),
+            declared: HashSet::new(),
+            dropped_imports: HashSet::new(),
             expression_depth: 0,
             in_statement: false,
         }
@@ -200,6 +223,11 @@ impl<'a> Emitter<'a> {
     // -------------------------------------------------------------- module
 
     fn emit(&mut self, module: &Module) {
+        // Names first, so a call can be checked against what the module binds
+        // even when the definition comes later in the source — and it does,
+        // because Python resolves names when they are called, not where they are
+        // written.
+        self.collect_declared(module);
         // Declarations first, so a global's initialiser can call a function
         // that appears later in the source: Go does not care about order.
         for item in &module.items {
@@ -306,6 +334,31 @@ impl<'a> Emitter<'a> {
         if matches!(head.as_str(), "typing" | "__future__" | "typing_extensions") {
             return;
         }
+        // Every name the import brings into scope. A whole-module import binds
+        // the module path (`import os` binds `os`); a named import binds each
+        // name it names, under its alias where it has one.
+        match &import.kind {
+            ImportKind::Module => {
+                if let Some(alias) = &import.alias {
+                    self.dropped_imports.insert(alias.to_string());
+                }
+                if let Some(head) = import.path.segments.first() {
+                    self.dropped_imports.insert(head.to_string());
+                }
+            }
+            ImportKind::Named(names) => {
+                for name in names {
+                    self.dropped_imports.insert(name.local().to_string());
+                }
+            }
+            ImportKind::Default(name) => {
+                self.dropped_imports.insert(name.local().to_string());
+            }
+            // `from x import *` binds names the source never wrote down, so
+            // there is nothing to record: a use of one is a name the module
+            // never binds, which is reported as such.
+            ImportKind::Star => {}
+        }
         self.diagnostics.push(
             gset_ir::Diagnostic::warning(
                 import.span,
@@ -323,6 +376,101 @@ impl<'a> Emitter<'a> {
             )
             .with_code("gset-backend-import"),
         );
+    }
+
+    /// Records every name the module binds, in every scope.
+    fn collect_declared(&mut self, module: &Module) {
+        for item in &module.items {
+            match item {
+                // An import this backend cannot map binds nothing, so its
+                // names are deliberately absent from `declared`: a use of one
+                // is reported as a dropped import rather than treated as a
+                // name the module defines.
+                Item::Import(_) => {}
+                Item::Function(function) => self.collect_declared_function(function),
+                Item::Global(global) => {
+                    for name in global.pattern.bound_names() {
+                        self.declared.insert(name.to_string());
+                    }
+                }
+                Item::Stmt(statement) => self.collect_declared_statement(statement),
+                _ => {}
+            }
+        }
+    }
+
+    fn collect_declared_function(&mut self, function: &Function) {
+        self.declared.insert(function.name.to_string());
+        for param in &function.params {
+            for name in param.bound_names() {
+                self.declared.insert(name.to_string());
+            }
+        }
+        for statement in &function.body.statements {
+            self.collect_declared_statement(statement);
+        }
+    }
+
+    fn collect_declared_statement(&mut self, statement: &Stmt) {
+        match statement {
+            Stmt::Assign { target, .. } => {
+                for name in target.bound_names() {
+                    self.declared.insert(name.to_string());
+                }
+            }
+            Stmt::Decl(decl) => {
+                for name in decl.pattern.bound_names() {
+                    self.declared.insert(name.to_string());
+                }
+            }
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                for statement in &then_branch.statements {
+                    self.collect_declared_statement(statement);
+                }
+                match else_branch.as_deref() {
+                    Some(Else::Block(block)) => {
+                        for statement in &block.statements {
+                            self.collect_declared_statement(statement);
+                        }
+                    }
+                    Some(Else::If(nested)) => self.collect_declared_statement(nested),
+                    None => {}
+                }
+            }
+            Stmt::While {
+                body, else_body, ..
+            }
+            | Stmt::ForIn {
+                body, else_body, ..
+            } => {
+                for statement in &body.statements {
+                    self.collect_declared_statement(statement);
+                }
+                if let Some(else_body) = else_body {
+                    for statement in &else_body.statements {
+                        self.collect_declared_statement(statement);
+                    }
+                }
+            }
+            Stmt::For { body, .. }
+            | Stmt::DoWhile { body, .. }
+            | Stmt::Block(body)
+            | Stmt::With { body, .. } => {
+                for statement in &body.statements {
+                    self.collect_declared_statement(statement);
+                }
+            }
+            Stmt::LocalItem(item) => {
+                if let Item::Function(function) = item.as_ref() {
+                    self.collect_declared_function(function);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn emit_global(&mut self, global: &VarDecl) {
@@ -369,6 +517,7 @@ impl<'a> Emitter<'a> {
         self.out.blank();
 
         let outer_locals = std::mem::take(&mut self.locals);
+        let outer_param_types = std::mem::take(&mut self.param_types);
         let outer_returns = self.returns_value;
         self.returns_value = returns_value;
 
@@ -387,6 +536,7 @@ impl<'a> Emitter<'a> {
         self.out.writeln("}");
 
         self.locals = outer_locals;
+        self.param_types = outer_param_types;
         self.returns_value = outer_returns;
     }
 
@@ -414,9 +564,12 @@ impl<'a> Emitter<'a> {
     }
 
     fn bind_params(&mut self, function: &Function) {
-        for pattern in &function.params {
+        for (index, pattern) in function.params.iter().enumerate() {
             for name in pattern.bound_names() {
                 self.locals.insert(name.to_string());
+                if let Some(Some(ty)) = function.param_types.get(index) {
+                    self.param_types.insert(name.to_string(), ty.clone());
+                }
             }
         }
     }
@@ -964,6 +1117,31 @@ impl<'a> Emitter<'a> {
     /// literal has no translation. Emitting it anyway produces a file that does
     /// not compile, which is worse than reporting: the program looks supported
     /// until something else tries to run it.
+    /// A value that stands in for something this backend reported.
+    ///
+    /// `nil` is an expression, not a statement: a reported call in statement
+    /// position would emit a line that does not compile, which is the one
+    /// outcome a diagnostic is supposed to avoid. Discarding it keeps the file
+    /// buildable while the diagnostic says what was lost.
+    /// A placeholder typed to what the surrounding program expects.
+    ///
+    /// A bare `nil` is only valid where the type is an interface, a pointer or
+    /// a collection. Where the source's own type is concrete the zero value
+    /// stands in, so a reported construct does not also break the file.
+    fn unusable_value_of(&self, ty: Option<&Type>, rendered: String) -> String {
+        if self.in_statement {
+            // `_ = nil` does not compile either: untyped `nil` has no type to
+            // assign. A discarded zero is as good as any placeholder, and the
+            // value it stands for is being thrown away either way.
+            return format!("_ = 0 /* {rendered} */");
+        }
+        let zero = ty
+            .and_then(named_type)
+            .map(|go_type_name| zero_value(&go_type_name))
+            .unwrap_or("nil");
+        format!("{zero} /* {rendered} */")
+    }
+
     fn emit_literal(&mut self, span: Span, literal: &Literal) -> String {
         if let Literal::Int(text) = literal
             && let Some(digits) = plain_decimal(text)
@@ -997,12 +1175,30 @@ impl<'a> Emitter<'a> {
     fn emit_expr(&mut self, expr: &Expr) -> String {
         match &expr.kind {
             ExprKind::Literal(literal) => self.emit_literal(expr.span, literal),
-            ExprKind::Path(path) => path
-                .segments
-                .iter()
-                .map(|segment| segment.to_string())
-                .collect::<Vec<_>>()
-                .join("."),
+            ExprKind::Path(path) => {
+                // An import this backend dropped binds nothing, so a use of it
+                // is a name Go has never heard of. Reporting at the use is the
+                // only place the program is actually wrong; the import itself
+                // was already warned about.
+                if let Some(root) = root_name(expr)
+                    && self.dropped_imports.contains(root)
+                {
+                    unsupported(self.diagnostics, expr.span, "a use of a dropped import");
+                    let ty = expr.ty.clone();
+                    let rendered = path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.to_string())
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    return self.unusable_value_of(Some(&ty), rendered);
+                }
+                path.segments
+                    .iter()
+                    .map(|segment| segment.to_string())
+                    .collect::<Vec<_>>()
+                    .join(".")
+            }
             ExprKind::Unary { op, operand } => {
                 let operand = self.emit_expr(operand);
                 match op {
@@ -1048,13 +1244,13 @@ impl<'a> Emitter<'a> {
                 callee,
                 args,
                 named_args,
-            } => self.emit_call(callee, args, named_args, expr.span),
+            } => self.emit_call(callee, args, named_args, expr.span, &expr.ty),
             ExprKind::MethodCall {
                 receiver,
                 method,
                 args,
                 named_args,
-            } => self.emit_method_call(receiver, method, args, named_args, expr.span),
+            } => self.emit_method_call(receiver, method, args, named_args, expr.span, &expr.ty),
             ExprKind::Index { target, index } => {
                 let target_text = self.emit_expr(target);
                 if concrete_type(target).is_none() {
@@ -1119,6 +1315,7 @@ impl<'a> Emitter<'a> {
         args: &[Expr],
         named_args: &[NamedArg],
         span: Span,
+        ty: &Type,
     ) -> String {
         if !named_args.is_empty() {
             unsupported(self.diagnostics, span, "keyword arguments");
@@ -1164,7 +1361,45 @@ impl<'a> Emitter<'a> {
                     unsupported(self.diagnostics, span, "`range` outside a loop header");
                     return "nil".to_string();
                 }
+                "sum" => {
+                    // Python's `sum` starts from an integer zero, so an empty
+                    // collection sums to `0` and a value that is not a number
+                    // is a `TypeError`. A typed collection keeps its type; a
+                    // dynamic one is classified at runtime.
+                    let typed = args.first().is_some_and(|argument| {
+                        let resolved = self.static_type_of(argument);
+                        sequence_element_type_of(&resolved)
+                            .is_some_and(|element| numeric_go_type(&element).is_some())
+                    });
+                    let helper = if typed {
+                        self.use_helper("gsetSum")
+                    } else {
+                        self.use_helper("gsetSumDynamic")
+                    };
+                    return format!("{helper}({})", rendered.join(", "));
+                }
                 _ => {}
+            }
+            // A name the module never binds cannot be called, and emitting the
+            // call anyway would leave a file that does not compile. Reporting
+            // is the honest outcome for both the builtins this backend cannot
+            // express and the names the source itself never defined.
+            if self.dropped_imports.contains(name) {
+                unsupported(self.diagnostics, span, "a use of a dropped import");
+                return self.unusable_value_of(Some(ty), format!("{name}()"));
+            }
+            if !self.declared.contains(name) {
+                if python_builtins().contains(&name) {
+                    unsupported(self.diagnostics, span, "this builtin");
+                } else {
+                    unsupported(
+                        self.diagnostics,
+                        span,
+                        "a call to a name the module never binds",
+                    );
+                }
+                let call = format!("{name}({})", rendered.join(", "));
+                return self.unusable_value_of(Some(ty), call);
             }
         }
         let callee = self.emit_expr(callee);
@@ -1186,9 +1421,24 @@ impl<'a> Emitter<'a> {
         args: &[Expr],
         named_args: &[NamedArg],
         span: Span,
+        ty: &Type,
     ) -> String {
         if !named_args.is_empty() {
             unsupported(self.diagnostics, span, "keyword arguments");
+        }
+        // `os.path.join(...)` is a method call on a name the dropped import never
+        // bound. Rendering the receiver would produce `nil.path`, so the call
+        // is reported here instead of assembled from a placeholder.
+        if let Some(root) = root_name(receiver)
+            && self.dropped_imports.contains(root)
+        {
+            let arguments: Vec<String> = args.iter().map(|arg| self.emit_expr(arg)).collect();
+            let rendered = format!(
+                "{}.{method}({})",
+                dotted_text(receiver),
+                arguments.join(", ")
+            );
+            return self.unusable_value_of(Some(ty), rendered);
         }
         // Read before rendering: rendering borrows the emitter, and the
         // expansion of a mutating method needs the receiver's type to name the
@@ -2020,6 +2270,20 @@ impl<'a> Emitter<'a> {
         Some(format!("{helper}({left}, {right}) {symbol} 0"))
     }
 
+    /// The type an expression has before inference is consulted.
+    ///
+    /// A parameter the source annotated is stated, not inferred, so it counts
+    /// even when the use of it has no type of its own yet.
+    fn static_type_of(&self, expr: &Expr) -> Type {
+        if let ExprKind::Path(path) = &expr.kind
+            && path.is_bare()
+            && let Some(declared) = self.param_types.get(path.segments[0].as_ref())
+        {
+            return declared.clone();
+        }
+        expr.ty.clone()
+    }
+
     /// Emits an operand, promoting it to `float64` when Python's numeric tower
     /// requires it and Go's types do not allow it.
     fn emit_operand(&mut self, expr: &Expr, promote: bool) -> String {
@@ -2804,6 +3068,46 @@ fn helpers() -> &'static [Helper] {
             ],
         },
         Helper {
+            name: "gsetSum",
+            signature: "func gsetSum[T ~int | ~int64 | ~float32 | ~float64](collection []T) T",
+            imports: &[],
+            deps: &[],
+            body: &[
+                "// A typed sum stays typed, so `sum(xs)` can be returned where an",
+                "// `int` is expected rather than arriving as an `interface{}` that",
+                "// the caller has to assert.",
+                "var total T",
+                "for _, item := range collection {",
+                "\ttotal += item",
+                "}",
+                "return total",
+            ],
+        },
+        Helper {
+            name: "gsetSumDynamic",
+            signature: "func gsetSumDynamic(collection interface{}) interface{}",
+            imports: &["fmt", "reflect"],
+            deps: &["gsetNumber"],
+            body: &[
+                "// Python's `sum` starts from an integer zero, so an empty",
+                "// collection sums to `0` rather than to nothing, and a value",
+                "// that is not a number is a `TypeError` there.",
+                "value := reflect.ValueOf(collection)",
+                "\ttotal := float64(0)",
+                "\tfor index := 0; index < value.Len(); index++ {",
+                "\t\titem, ok := gsetNumber(value.Index(index).Interface())",
+                "\t\tif !ok {",
+                "\t\t\tpanic(fmt.Sprintf(\"gset: a sum over '%T'\", value.Index(index).Interface()))",
+                "\t\t}",
+                "\t\ttotal += item",
+                "\t}",
+                "\tif total == float64(int64(total)) {",
+                "\t\treturn int(total)",
+                "\t}",
+                "\treturn total",
+            ],
+        },
+        Helper {
             name: "gsetNumber",
             signature: "func gsetNumber(value interface{}) (float64, bool)",
             imports: &[],
@@ -3098,7 +3402,11 @@ fn go_type(ty: &Type) -> String {
         Type::OrderedMap { key, value, .. } => {
             format!("map[{}]{}", go_type(key), go_type(value))
         }
-        Type::Option(inner) => go_type(inner),
+        // An optional value is either the value or the absent one, and Go's way
+        // to say that is `interface{}` holding the value or `nil`. Rendering the
+        // inner type instead would turn `Optional[int]` into an `int` that
+        // cannot hold the `None` the source can return.
+        Type::Option(_) => "interface{}".to_string(),
         Type::Function {
             params,
             ret,
@@ -3241,6 +3549,37 @@ fn sequence_element_type(elements: &[Expr]) -> String {
         }
     }
     kind.unwrap_or_else(|| "interface{}".to_string())
+}
+
+/// The Go element type of a sequence value, if its type names one.
+fn sequence_element_type_of(ty: &Type) -> Option<String> {
+    match ty {
+        Type::List { element, .. } | Type::Set(element) => {
+            let rendered = go_type(element);
+            (!rendered.is_empty() && rendered != "interface{}").then_some(rendered)
+        }
+        _ => None,
+    }
+}
+
+/// Whether a Go type is one of the numeric families a typed sum can add.
+fn numeric_go_type(go_type_name: &str) -> Option<()> {
+    matches!(
+        go_type_name,
+        "int"
+            | "int8"
+            | "int16"
+            | "int32"
+            | "int64"
+            | "uint"
+            | "uint8"
+            | "uint16"
+            | "uint32"
+            | "uint64"
+            | "float32"
+            | "float64"
+    )
+    .then_some(())
 }
 
 /// The Go type one element of a literal sequence has.
@@ -3459,6 +3798,118 @@ fn zero_value(go_type_name: &str) -> &'static str {
         | "uint64" | "byte" | "rune" | "float32" | "float64" => "0",
         _ => "nil",
     }
+}
+
+/// The source-level text of a name or attribute chain.
+///
+/// Unlike [`Emitter::emit_expr`] this never substitutes a placeholder for a
+/// reported name, so it can be quoted inside a diagnostic comment without
+/// nesting one comment inside another.
+fn dotted_text(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::Path(path) => path
+            .segments
+            .iter()
+            .map(|segment| segment.to_string())
+            .collect::<Vec<_>>()
+            .join("."),
+        ExprKind::Field { target, field } => format!("{}.{field}", dotted_text(target)),
+        _ => String::new(),
+    }
+}
+
+/// The leftmost name an expression starts from.
+///
+/// `os.path.join` is a field access on a field access on a path, and only the
+/// leftmost segment says which module a name came from — which is the question
+/// a dropped import raises.
+fn root_name(expr: &Expr) -> Option<&str> {
+    match &expr.kind {
+        ExprKind::Path(path) => path.segments.first().map(|segment| segment.as_ref()),
+        ExprKind::Field { target, .. } => root_name(target),
+        _ => None,
+    }
+}
+
+/// The names Python provides without an import.
+///
+/// Used to tell two failures apart at a call site: a builtin this backend has
+/// no answer for is a gap in the backend, while a name that is not a builtin and
+/// not bound by the module is a mistake in the source. Both report, but they
+/// are not the same defect and a diagnostic that says "this builtin" for a name
+/// the program never defined would point at the wrong thing.
+fn python_builtins() -> &'static [&'static str] {
+    &[
+        "abs",
+        "aiter",
+        "all",
+        "anext",
+        "any",
+        "ascii",
+        "bin",
+        "bool",
+        "breakpoint",
+        "bytearray",
+        "bytes",
+        "callable",
+        "chr",
+        "classmethod",
+        "compile",
+        "complex",
+        "delattr",
+        "dict",
+        "dir",
+        "divmod",
+        "enumerate",
+        "eval",
+        "exec",
+        "filter",
+        "float",
+        "format",
+        "frozenset",
+        "getattr",
+        "globals",
+        "hasattr",
+        "hash",
+        "help",
+        "hex",
+        "id",
+        "input",
+        "int",
+        "isinstance",
+        "issubclass",
+        "iter",
+        "len",
+        "list",
+        "locals",
+        "map",
+        "max",
+        "min",
+        "next",
+        "object",
+        "oct",
+        "open",
+        "ord",
+        "pow",
+        "print",
+        "property",
+        "range",
+        "repr",
+        "reversed",
+        "round",
+        "set",
+        "setattr",
+        "slice",
+        "sorted",
+        "staticmethod",
+        "str",
+        "sum",
+        "super",
+        "tuple",
+        "type",
+        "vars",
+        "zip",
+    ]
 }
 
 fn describe_item(item: &Item) -> &'static str {

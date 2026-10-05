@@ -11,15 +11,15 @@ backend    exceptions
 ok         fib
 backend    fstrings
 invalid    higher_order
-invalid    imports
+backend    imports
 backend    lambdas
 backend    literals
-invalid    loops
-invalid    module_shape
+backend    loops
+backend    module_shape
 ok         null_handling
 backend    numeric_literals
 frontend   operators
 ok         returns
 invalid    typed
 
-3 ok / 1 frontend / 13 backend / 0 malformed / 6 invalid
+3 ok / 1 frontend / 16 backend / 0 malformed / 3 invalid

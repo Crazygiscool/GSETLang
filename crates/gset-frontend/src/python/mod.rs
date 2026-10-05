@@ -830,4 +830,47 @@ print(grid[0][1][2])
             "these constructs must stay within the depth limit"
         );
     }
+
+    #[test]
+    fn a_generic_annotation_carries_its_arguments() {
+        // `List[int]` from `typing` and `list[int]` are the same annotation
+        // written two ways, and a backend that cannot tell the element type of
+        // a list has to emit a dynamic value where the source stated one.
+        let source = "\
+from typing import Dict, List, Optional, Tuple, Union
+
+def f(values: List[int], table: Dict[str, float], pair: Tuple[int, str], maybe: Optional[int], either: Union[int, str], lower: list[bool]) -> Set[int]:
+    return 0
+";
+        let lowered = lower::lower("annotations.py", source);
+        assert!(
+            !lowered
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.severity == gset_ir::Severity::Error),
+            "{:?}",
+            lowered.diagnostics
+        );
+        let Some(module) = &lowered.module else {
+            panic!("the module should lower");
+        };
+        let function = module
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Function(function) => Some(function),
+                _ => None,
+            })
+            .expect("the module should contain the function");
+        let named = |index: usize| match &function.param_types[index] {
+            Some(ty) => format!("{ty:?}"),
+            None => "none".to_string(),
+        };
+        assert!(named(0).starts_with("List { element: Int"), "{}", named(0));
+        assert!(named(1).starts_with("Map("), "{}", named(1));
+        assert!(named(2).starts_with("Tuple"), "{}", named(2));
+        assert!(named(3).starts_with("Option"), "{}", named(3));
+        assert!(named(4).starts_with("Union"), "{}", named(4));
+        assert!(named(5).starts_with("List { element: Bool"), "{}", named(5));
+    }
 }

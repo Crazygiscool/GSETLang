@@ -2404,21 +2404,42 @@ impl<'a> Lowerer<'a> {
     /// name a type and resolving it is `gset-semantic`'s job.
     fn type_of(&mut self, node: tree_sitter::Node<'_>) -> Type {
         match node.kind() {
-            "type" => match node.named_child(0) {
+            "type" | "type_parameter" | "type_annotation" => match node.named_child(0) {
                 Some(inner) => self.type_of(inner),
                 None => Type::UNKNOWN,
             },
             "identifier" => self.named_type(self.name_of(node)),
             "none" => Type::Null,
-            "generic_type" => {
+            // `list[int]` is a `generic_type` and `List[int]` — the name from
+            // `typing` — is a plain subscript. They mean the same annotation, so
+            // one arm reads both: a subscript whose base is not a name is a
+            // runtime expression rather than an annotation.
+            "generic_type" | "subscript" => {
                 let Some(base) = node.named_child(0) else {
                     return Type::UNKNOWN;
                 };
+                if node.kind() == "subscript" && base.kind() != "identifier" {
+                    return Type::UNKNOWN;
+                }
                 let base_name = self.name_of(base);
                 let mut arguments = Vec::new();
-                if let Some(list) = node.child_by_field_name("type_parameters") {
-                    for argument in named_children(list) {
+                // `List[int]` and `list[int]` both parse as a `generic_type`
+                // whose arguments are each a `type_parameter` child, so they
+                // are plain named children rather than fields. A subscript
+                // reached here keeps its arguments as siblings of the value.
+                let parameters: Vec<_> = named_children(node)
+                    .into_iter()
+                    .filter(|child| child.kind() == "type_parameter")
+                    .collect();
+                if !parameters.is_empty() {
+                    for argument in parameters {
                         arguments.push(self.type_of(argument));
+                    }
+                } else if node.kind() == "subscript" {
+                    for argument in named_children(node) {
+                        if argument.id() != base.id() {
+                            arguments.push(self.type_of(argument));
+                        }
                     }
                 }
                 match &*base_name {
