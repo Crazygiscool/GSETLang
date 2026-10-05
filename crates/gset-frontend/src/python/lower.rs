@@ -1033,19 +1033,24 @@ impl<'a> Lowerer<'a> {
 
     /// Lowers a conditional, hoisting any binding its condition makes.
     fn if_statement(&mut self, node: tree_sitter::Node<'_>, span: Span) -> Vec<Stmt> {
-        let condition = match node.child_by_field_name("condition") {
-            Some(n) => self.condition(n),
-            None => Expr::error("`if` with no condition", span),
+        // A walrus in a condition binds its name for the rest of the enclosing
+        // block, which a `Let` cannot express: the value outlives the condition.
+        // A preceding assignment is Python's rule, and statement level is the
+        // only place hoisting one is sound.
+        let (mut statements, condition) = match node.child_by_field_name("condition") {
+            Some(n) => peel_lets(self.condition(n)),
+            None => (Vec::new(), Expr::error("`if` with no condition", span)),
         };
         let then_branch = self.block(node.child_by_field_name("consequence"));
         let else_branch = self.else_branch(node);
 
-        vec![Stmt::If {
+        statements.push(Stmt::If {
             condition,
             then_branch,
             else_branch: else_branch.map(Box::new),
             span,
-        }]
+        });
+        statements
     }
 
     /// Lowers an `else` or `elif` chain.
@@ -1088,21 +1093,22 @@ impl<'a> Lowerer<'a> {
 
     /// Lowers a `while`, hoisting any binding its condition makes.
     fn while_statement(&mut self, node: tree_sitter::Node<'_>, span: Span) -> Vec<Stmt> {
-        let condition = match node.child_by_field_name("condition") {
-            Some(n) => self.condition(n),
-            None => Expr::error("`while` with no condition", span),
+        let (mut statements, condition) = match node.child_by_field_name("condition") {
+            Some(n) => peel_lets(self.condition(n)),
+            None => (Vec::new(), Expr::error("`while` with no condition", span)),
         };
         self.loop_depth += 1;
         let body = self.block(node.child_by_field_name("body"));
         self.loop_depth -= 1;
         let else_body = self.loop_else(node);
 
-        vec![Stmt::While {
+        statements.push(Stmt::While {
             condition,
             body,
             else_body,
             span,
-        }]
+        });
+        statements
     }
 
     /// Lowers a loop's `else` clause, which runs when the loop ends without
@@ -1872,9 +1878,10 @@ impl<'a> Lowerer<'a> {
                 self.unsupported(operators[0], "comparison operator");
                 return Expr::error("unsupported comparison", span);
             };
-            let lhs = self.expr(operands[0]);
-            let rhs = self.expr(operands[1]);
-            return Expr::new(
+            let mut hoisted = Vec::new();
+            let lhs = self.operand(operands[0], &mut hoisted);
+            let rhs = self.operand(operands[1], &mut hoisted);
+            let comparison = Expr::new(
                 ExprKind::Compare {
                     op,
                     lhs: Box::new(lhs),
@@ -1882,6 +1889,7 @@ impl<'a> Lowerer<'a> {
                 },
                 span,
             );
+            return hoist(hoisted, comparison);
         }
 
         if operands.len() < 2 || operators.len() < 2 {
@@ -1948,6 +1956,51 @@ impl<'a> Lowerer<'a> {
         result
     }
 
+    /// Lowers an operand, pulling out a walrus it contains.
+    ///
+    /// `(n := len(xs)) > 2` binds `n` for the comparison, not for the rest of
+    /// the function, so the binding has to wrap the comparison rather than sit
+    /// inside it. Lowering the operand on its own would produce a binding whose
+    /// scope is the operand, which is a name no other expression can see.
+    fn operand(&mut self, node: tree_sitter::Node<'_>, hoisted: &mut Vec<(Pattern, Expr)>) -> Expr {
+        if let Some((pattern, value, span)) = self.walrus(node) {
+            let name = match pattern.single_binding() {
+                Some(name) => name.to_string(),
+                None => {
+                    self.builder.report(
+                        Diagnostic::error(span, "a walrus binds exactly one name")
+                            .with_code("gset-python-unsupported"),
+                    );
+                    return Expr::error("a walrus that binds no name", span);
+                }
+            };
+            hoisted.push((pattern, value));
+            return Expr::path(gset_ir::name(&name), span);
+        }
+        self.expr(node)
+    }
+
+    /// The binding and value of a node that is only a walrus, if it is one.
+    fn walrus(&mut self, node: tree_sitter::Node<'_>) -> Option<(Pattern, Expr, Span)> {
+        let span = self.span(node);
+        let inner = match node.kind() {
+            "named_expression" => node,
+            "parenthesized_expression" => {
+                let inner = node.named_child(0)?;
+                if inner.kind() != "named_expression" {
+                    return None;
+                }
+                inner
+            }
+            _ => return None,
+        };
+        let name = inner.child_by_field_name("name")?;
+        let value = inner.child_by_field_name("value")?;
+        let pattern = Pattern::bind(self.name_of(name), self.span(name));
+        let value = self.expr(value);
+        Some((pattern, value, span))
+    }
+
     /// Lowers a subscript, distinguishing an index from a slice.
     fn subscript(&mut self, node: tree_sitter::Node<'_>, span: Span) -> Expr {
         let target = node
@@ -1989,10 +2042,37 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Lowers `target[start:end:step]`.
+    ///
+    /// The bounds are read by counting the colons, not by position among the
+    /// named children: a colon is not a named child, so `xs[:2]` has exactly
+    /// one named child and reading it as the start bound quietly turns the
+    /// first two elements into the last n-1.
     fn slice_of(&mut self, target: Expr, node: tree_sitter::Node<'_>, span: Span) -> Expr {
-        let children = named_children(node);
-        let start = children.first().map(|n| self.expr(*n)).map(Box::new);
-        let end = children.get(1).map(|n| self.expr(*n)).map(Box::new);
+        let mut start = None;
+        let mut end = None;
+        let mut colons = 0usize;
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == ":" {
+                colons += 1;
+                continue;
+            }
+            if !child.is_named() {
+                continue;
+            }
+            match colons {
+                0 => start = Some(Box::new(self.expr(child))),
+                1 => end = Some(Box::new(self.expr(child))),
+                _ => {
+                    // A step is not an absent bound but a different slice: it
+                    // drops elements, so dropping it here would answer a
+                    // question the program did not ask.
+                    self.builder.report(
+                        Diagnostic::error(span, "a slice step has no representation")
+                            .with_code("gset-python-slice-step"),
+                    );
+                }
+            }
+        }
         Expr::new(
             ExprKind::Slice {
                 target: Box::new(target),
@@ -2144,10 +2224,14 @@ impl<'a> Lowerer<'a> {
             );
         }
 
-        // A mapping keeps its key in `key` and its value in `element`, so the
-        // IR's separate `value` slot stays empty: the IR's own shape is what the
-        // backend reads.
-        let value = None;
+        // The IR's `element` slot is documented as the produced value for a
+        // list, set or generator, and a mapping's produced value has its own
+        // slot. Leaving `value` empty made every backend read the key instead,
+        // so `{n: n * 2 for n in xs}` came out as a set of keys.
+        let value = match kind {
+            ComprehensionKind::Map => Some(Box::new(element.clone())),
+            _ => None,
+        };
         Expr::new(
             ExprKind::Comprehension {
                 kind,
@@ -2160,6 +2244,71 @@ impl<'a> Lowerer<'a> {
             span,
         )
     }
+}
+
+/// Resolves the doubled braces an f-string uses to escape a literal one.
+fn unescape_braces(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        let doubled = matches!(character, '{' | '}') && characters.peek() == Some(&character);
+        if doubled {
+            characters.next();
+        }
+        out.push(character);
+    }
+    out
+}
+
+/// Moves the bindings a condition introduced into statements before it.
+///
+/// A [`ExprKind::Let`] scopes over the expression it wraps, which is exactly
+/// right for a walrus inside a call argument and exactly wrong for one in a
+/// condition: `if (n := f()):` leaves `n` bound for the rest of the block. The
+/// binding therefore becomes an assignment statement and the condition keeps
+/// only what it evaluated to.
+fn peel_lets(expr: Expr) -> (Vec<Stmt>, Expr) {
+    let mut statements = Vec::new();
+    let mut current = expr;
+    // Innermost first, so the statements come out in the source order the
+    // nestings were written in and each name is bound before it is used.
+    while let ExprKind::Let {
+        pattern,
+        value,
+        body,
+    } = current.kind
+    {
+        let span = current.span;
+        statements.push(Stmt::Assign {
+            target: pattern,
+            value: *value,
+            span,
+        });
+        current = *body;
+    }
+    statements.reverse();
+    (statements, current)
+}
+
+/// Wraps `body` in the bindings `hoisted` collected, innermost first.
+///
+/// `ExprKind::Let` is the IR's scoped binding, so one wrap per walrus in source
+/// order gives each name exactly the scope Python gives it.
+fn hoist(hoisted: Vec<(Pattern, Expr)>, body: Expr) -> Expr {
+    let span = body.span;
+    hoisted
+        .into_iter()
+        .rev()
+        .fold(body, |body, (pattern, value)| {
+            Expr::new(
+                ExprKind::Let {
+                    pattern,
+                    value: Box::new(value),
+                    body: Box::new(body),
+                },
+                span,
+            )
+        })
 }
 
 /// Whether an expression can be evaluated twice without changing anything.
@@ -2414,6 +2563,13 @@ impl<'a> Lowerer<'a> {
             }
         }
         segments.push(current);
+        // A doubled brace in an f-string is an escape for one brace, so a
+        // segment — which is the text around a hole, not its source spelling —
+        // has to hold the brace the program prints.
+        let segments: Vec<String> = segments
+            .iter()
+            .map(|segment| unescape_braces(segment))
+            .collect();
 
         let format = if specifiers.is_empty() {
             None

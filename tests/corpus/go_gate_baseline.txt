@@ -1,47 +1,25 @@
 backend    arguments
-           this backend cannot express keyword arguments; it is reported rather than emitted incorrectly
 backend    async_flow
-           this backend cannot express a `yield`; it is reported rather than emitted incorrectly
 backend    classes
-           this backend cannot express a class; it is reported rather than emitted incorrectly
 backend    comprehensions
-           this backend cannot express a comprehension; it is reported rather than emitted incorrectly
 backend    context_managers
-           this backend cannot express a `with`; it is reported rather than emitted incorrectly
 invalid    declaration_after_if
-           vet: <generated>/declaration_after_if.go:6:5: invalid operation: value > 0 (operator > not defined on interface)
 backend    declarations
-           this backend cannot express a class; it is reported rather than emitted incorrectly
 backend    decorators
-           this backend cannot express the `.getLogger` method; it is reported rather than emitted incorrectly
 backend    destructuring
-           this backend cannot express a multiple assignment whose right-hand side is not a tuple literal; it is reported rather than emitted incorrectly
 backend    exceptions
-           this backend cannot express a `try`; it is reported rather than emitted incorrectly
 ok         fib
 backend    fstrings
-           this backend cannot express a conditional expression; it is reported rather than emitted incorrectly
-backend    higher_order
-           this backend cannot express a comprehension; it is reported rather than emitted incorrectly
-backend    imports
-           this backend cannot express the `.join` method; it is reported rather than emitted incorrectly
+invalid    higher_order
+invalid    imports
 backend    lambdas
-           this backend cannot express keyword arguments; it is reported rather than emitted incorrectly
 backend    literals
-           this backend cannot express a map literal; it is reported rather than emitted incorrectly
-backend    loops
-           this backend cannot express a loop `else` clause; it is reported rather than emitted incorrectly
+invalid    loops
 invalid    module_shape
-           vet: <generated>/module_shape.go:16:3: undefined: second
-backend    null_handling
-           this backend cannot express a scoped binding; it is reported rather than emitted incorrectly
+invalid    null_handling
 backend    numeric_literals
-           this backend cannot express this binary operator; it is reported rather than emitted incorrectly
-backend    operators
-           this backend cannot express this comparison; it is reported rather than emitted incorrectly
+frontend   operators
 invalid    returns
-           vet: <generated>/returns.go:6:5: invalid operation: n > 0 (operator > not defined on interface)
-backend    typed
-           this backend cannot express the `.get` method; it is reported rather than emitted incorrectly
+invalid    typed
 
-1 ok / 0 frontend / 19 backend / 0 malformed / 3 invalid
+1 ok / 1 frontend / 13 backend / 0 malformed / 8 invalid

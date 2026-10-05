@@ -21,12 +21,12 @@
 //! `print(...)` where it appeared would be a Go syntax error, which is the
 //! class of defect the M2 gate exists to catch.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use gset_ir::{
-    BinaryOp, Block, ComparisonOp, Else, Expr, ExprKind, Function, Import, Item, Literal,
-    LogicalOp, Module, NamedArg, Pattern, PatternKind, SourceMap, Span, Stmt, Type, UnaryOp,
-    VarDecl,
+    BinaryOp, Block, ComparisonOp, ComprehensionKind, Else, Expr, ExprKind, Function, Import, Item,
+    Literal, LogicalOp, Module, NamedArg, Pattern, PatternKind, SourceMap, Span, Stmt, Type,
+    UnaryOp, VarDecl,
 };
 
 use crate::backend::{Backend, unsupported};
@@ -88,17 +88,45 @@ impl Backend for Go {
         // actually needs it. An unused import is a Go compile error, so
         // emitting it unconditionally would fail every program that does not
         // print.
-        let mut body = CodeWriter::new(self.indentation());
-        let (needs_fmt, text) = {
-            let mut emitter = Emitter::new(&mut body, diagnostics);
+        // Two passes, because the helper a program needs is not known until the
+        // statement that uses it has been rendered, while the helpers have to be
+        // written before it. The first pass discovers them and its diagnostics
+        // are thrown away, since the second pass reports the same ones for real.
+        let mut discovery = DiagnosticBag::new();
+        let mut probe = CodeWriter::new(self.indentation());
+        let discovered = {
+            let mut emitter = Emitter::new(&mut probe, &mut discovery);
             emitter.emit(module);
-            (emitter.needs_fmt, body.into_string())
+            emitter.helpers.clone()
+        };
+
+        let mut body = CodeWriter::new(self.indentation());
+        let (imports, text) = {
+            let mut emitter = Emitter::new(&mut body, diagnostics);
+            emitter.helpers = discovered;
+            emitter.emit(module);
+            (emitter.imports, body.into_string())
         };
 
         writer.writeln("package main");
         writer.blank();
-        if needs_fmt {
-            writer.writeln("import \"fmt\"");
+        if !imports.is_empty() {
+            // Collected in a sorted set because Go compiles imports in source
+            // order but the set decides which are needed: emitting them in
+            // discovery order would make output depend on the order the
+            // constructs appeared, and the golden would churn.
+            if imports.len() == 1 {
+                let path = imports.iter().next().expect("one import");
+                writer.writeln(&format!("import \"{path}\""));
+            } else {
+                writer.writeln("import (");
+                writer.indent();
+                for path in &imports {
+                    writer.writeln(&format!("\"{path}\""));
+                }
+                writer.dedent();
+                writer.writeln(")");
+            }
             writer.blank();
         }
         writer.write(&text);
@@ -109,8 +137,10 @@ impl Backend for Go {
 struct Emitter<'a> {
     out: &'a mut CodeWriter,
     diagnostics: &'a mut DiagnosticBag,
-    /// Whether the emitted program calls into `fmt`.
-    needs_fmt: bool,
+    /// Standard library packages the emitted program imports.
+    imports: BTreeSet<&'static str>,
+    /// Helper functions the emitted program needs, emitted once each.
+    helpers: BTreeSet<&'static str>,
     /// Top-level statements, collected so they can be emitted inside `main`.
     ///
     /// Cloned rather than borrowed: the borrow checker cost of holding module
@@ -125,6 +155,29 @@ struct Emitter<'a> {
     /// Whether the current function returns a value, which decides whether a
     /// bare `return` becomes `return nil`.
     returns_value: bool,
+    /// How many multi-line expressions are still being built around this one.
+    ///
+    /// An expansion that contains another expansion — a comprehension whose
+    /// element is itself a comprehension — has to indent the inner one's lines by
+    /// the block it sits in, and the inner one is rendered before the outer one
+    /// knows where it will land. This counts the blocks in between.
+    expression_depth: usize,
+    /// Names of the flags that mark "this loop was left by `break`", innermost
+    /// last.
+    ///
+    /// Python runs a loop's `else` only when the loop finished without a
+    /// `break`, which Go has no syntax for: `break` and falling out of a `for`
+    /// are indistinguishable afterwards. A flag set by every `break` inside the
+    /// loop restores the distinction, and it has to be threaded through the
+    /// body because that is where the `break`s are.
+    loop_else_flags: Vec<String>,
+    /// Whether the expression being emitted is a statement of its own.
+    ///
+    /// Python's mutating methods return `None` but Go's equivalent returns the
+    /// collection, so the expansion is an assignment and needs statement
+    /// position to have anywhere to put it. Nested inside a larger expression
+    /// there is nowhere, and the method is reported instead.
+    in_statement: bool,
 }
 
 impl<'a> Emitter<'a> {
@@ -132,11 +185,15 @@ impl<'a> Emitter<'a> {
         Emitter {
             out,
             diagnostics,
-            needs_fmt: false,
+            imports: BTreeSet::new(),
+            helpers: BTreeSet::new(),
             main_statements: Vec::new(),
             globals: HashSet::new(),
             locals: HashSet::new(),
             returns_value: false,
+            loop_else_flags: Vec::new(),
+            expression_depth: 0,
+            in_statement: false,
         }
     }
 
@@ -161,7 +218,61 @@ impl<'a> Emitter<'a> {
             }
         }
 
+        self.emit_helpers();
         self.emit_main();
+    }
+
+    /// Emits the helper functions the program called, once each.
+    ///
+    /// Helpers are emitted after the program's own declarations and before
+    /// `main`, so a helper can be used by a declaration that textually precedes
+    /// it, which is what Go requires of nothing but is the least surprising
+    /// order for a reader.
+    fn emit_helpers(&mut self) {
+        for name in std::mem::take(&mut self.helpers) {
+            let Some(helper) = helpers().iter().find(|helper| helper.name == name) else {
+                continue;
+            };
+            for path in helper.imports {
+                self.imports.insert(path);
+            }
+            self.out.blank();
+            self.out.writeln(&format!("{} {{", helper.signature));
+            self.out.indent();
+            for line in helper.body {
+                if line.is_empty() {
+                    self.out.blank();
+                } else {
+                    self.out.writeln(line);
+                }
+            }
+            self.out.dedent();
+            self.out.writeln("}");
+        }
+    }
+
+    /// Records that the program uses a helper, and returns its name.
+    ///
+    /// A helper that calls another helper pulls it in too: emitting `gsetGetOr`
+    /// without `gsetGet` would produce a file that does not compile, which is the
+    /// one outcome worse than reporting the construct.
+    fn use_helper(&mut self, name: &'static str) -> &'static str {
+        self.helpers.insert(name);
+        let table = helpers();
+        let mut pending: Vec<&'static str> = table
+            .iter()
+            .find(|helper| helper.name == name)
+            .map(|helper| helper.deps.to_vec())
+            .unwrap_or_default();
+        while let Some(dependency) = pending.pop() {
+            if !self.helpers.insert(dependency) {
+                continue;
+            }
+            if let Some(helper) = table.iter().find(|helper| helper.name == dependency) {
+                pending.extend(helper.deps.iter().copied());
+            }
+        }
+        name
     }
 
     fn emit_main(&mut self) {
@@ -329,17 +440,7 @@ impl<'a> Emitter<'a> {
                 body,
                 else_body,
                 span,
-            } => {
-                if else_body.is_some() {
-                    unsupported(self.diagnostics, *span, "a loop `else` clause");
-                }
-                let condition = self.emit_condition(condition);
-                self.out.writeln(&format!("for {condition} {{"));
-                self.out.indent();
-                self.emit_block_body(body);
-                self.out.dedent();
-                self.out.writeln("}");
-            }
+            } => self.emit_while(condition, body, else_body.as_ref(), *span),
             Stmt::ForIn {
                 pattern,
                 iterable,
@@ -358,6 +459,11 @@ impl<'a> Emitter<'a> {
             Stmt::Break { label, span } => {
                 if label.is_some() {
                     unsupported(self.diagnostics, *span, "a labelled `break`");
+                }
+                // A loop with an `else` clause runs it only when no `break`
+                // escaped, so the escape has to be recorded before it happens.
+                if let Some(flag) = self.loop_else_flags.last().cloned() {
+                    self.out.writeln(&format!("{flag} = false"));
                 }
                 self.out.writeln("break");
             }
@@ -533,6 +639,14 @@ impl<'a> Emitter<'a> {
     }
 
     fn emit_expr_statement(&mut self, expr: &Expr) {
+        // Everything inside this statement is statement position, including the
+        // expressions nested in it: `xs.append(f())` is still a statement.
+        let outer = std::mem::replace(&mut self.in_statement, true);
+        self.emit_expr_statement_inner(expr);
+        self.in_statement = outer;
+    }
+
+    fn emit_expr_statement_inner(&mut self, expr: &Expr) {
         // A compound assignment arrives as an expression so it can carry the
         // previous value and the operator. Go spells it `target op= value`.
         if let ExprKind::Assign {
@@ -623,8 +737,21 @@ impl<'a> Emitter<'a> {
                     .map(str::to_string)
                     .unwrap_or(rendered)
             }
-            _ => rendered,
+            _ => self.emit_truthy(condition, rendered),
         }
+    }
+
+    /// Wraps a condition that is not already a bool in Go's truthiness test.
+    ///
+    /// Python lets any value be a condition; Go does not. Emitting the value
+    /// bare is a compile error for everything but a bool, so anything else is
+    /// asked about at runtime, which is what Python does.
+    fn emit_truthy(&mut self, expr: &Expr, rendered: String) -> String {
+        if matches!(expr.ty, Type::Bool) {
+            return rendered;
+        }
+        let helper = self.use_helper("gsetTruthy");
+        format!("{helper}({rendered})")
     }
 
     fn emit_if(&mut self, condition: &Expr, then_branch: &Block, else_branch: Option<&Else>) {
@@ -680,11 +807,9 @@ impl<'a> Emitter<'a> {
         iterable: &Expr,
         body: &Block,
         else_body: Option<&Block>,
-        span: Span,
+        _span: Span,
     ) {
-        if else_body.is_some() {
-            unsupported(self.diagnostics, span, "a loop `else` clause");
-        }
+        let completed = else_body.map(|_| self.fresh_name("completed"));
         // `for x in range(...)` is the one Python loop that maps onto a
         // counting `for` without materialising a sequence.
         if let Some(range) = range_arguments(iterable) {
@@ -696,38 +821,98 @@ impl<'a> Emitter<'a> {
                 self.locals.insert(index.clone());
             }
             let header = range.header(&index, self);
-            self.out.writeln(&format!("for {header} {{"));
-            self.out.indent();
-            self.emit_block_body(body);
-            self.out.dedent();
-            self.out.writeln("}");
+            self.emit_loop(&header, body, else_body, &completed, &[]);
             return;
         }
 
-        let iterable = self.emit_expr(iterable);
-        match pattern.single_binding() {
-            Some(name) => {
-                let name = name.to_string();
-                self.locals.insert(name.clone());
-                self.out
-                    .writeln(&format!("for _, {name} := range {iterable} {{"));
-            }
-            None if matches!(pattern.kind, PatternKind::Ignore) => {
-                self.out.writeln(&format!("for range {iterable} {{"));
-            }
-            None => {
-                unsupported(
-                    self.diagnostics,
-                    pattern.span,
-                    "a destructuring loop binding",
-                );
-                self.out.writeln(&format!("for range {iterable} {{"));
-            }
+        // A sequence pattern keeps its names in subpatterns, so they have to be
+        // collected before the pattern can be read as a list of bindings.
+        let mut pattern_names = Vec::new();
+        pattern.collect_names(&mut pattern_names);
+        let pairs = matches!(pattern.kind, PatternKind::Sequence) && pattern_names.len() == 2;
+        let dynamic = concrete_type(iterable).is_none();
+        let iterable_helper = dynamic.then(|| self.use_helper("gsetIter"));
+        let mut iterable = self.emit_expr(iterable);
+        if let Some(helper) = iterable_helper {
+            iterable = format!("{helper}({iterable})");
         }
+        let mut prologue = Vec::new();
+        let header = if pairs {
+            // `for k, v in d.items()` on a mapping the source never typed: Go
+            // cannot range over a map as pairs, so the helper produces them.
+            let helper = self.use_helper("gsetPairs");
+            let (pair, bindings) = self.pair_bindings("pair", &pattern_names);
+            prologue = bindings;
+            format!("_, {pair} := range {helper}({iterable})")
+        } else {
+            match pattern.single_binding() {
+                Some(name) => {
+                    let name = name.to_string();
+                    self.locals.insert(name.clone());
+                    format!("_, {name} := range {iterable}")
+                }
+                None if matches!(pattern.kind, PatternKind::Ignore) => format!("range {iterable}"),
+                None => {
+                    unsupported(
+                        self.diagnostics,
+                        pattern.span,
+                        "a destructuring loop binding",
+                    );
+                    format!("range {iterable}")
+                }
+            }
+        };
+        self.emit_loop(&header, body, else_body, &completed, &prologue);
+    }
+
+    /// Emits `for <header> { ... }` plus any `else` clause.
+    ///
+    /// The `else` becomes an `if` on the flag the loop's `break`s reset, which is
+    /// the only place Python's rule can live in Go.
+    fn emit_loop(
+        &mut self,
+        header: &str,
+        body: &Block,
+        else_body: Option<&Block>,
+        completed: &Option<String>,
+        prologue: &[String],
+    ) {
+        if let Some(flag) = completed {
+            self.out.writeln(&format!("{flag} := true"));
+            // Two loops in one function must not both declare `completed`, and
+            // `fresh_name` only looks at names already in scope.
+            self.locals.insert(flag.clone());
+            self.loop_else_flags.push(flag.clone());
+        }
+        self.out.writeln(&format!("for {header} {{"));
         self.out.indent();
+        for line in prologue {
+            self.out.writeln(line);
+        }
         self.emit_block_body(body);
         self.out.dedent();
         self.out.writeln("}");
+        if let (Some(flag), Some(else_body)) = (completed, else_body) {
+            self.loop_else_flags.pop();
+            self.out.writeln(&format!("if {flag} {{"));
+            self.out.indent();
+            self.emit_block_body(else_body);
+            self.out.dedent();
+            self.out.writeln("}");
+        }
+    }
+
+    /// Emits `while`, which is a `for` with no header in Go.
+    fn emit_while(
+        &mut self,
+        condition: &Expr,
+        body: &Block,
+        else_body: Option<&Block>,
+        _span: Span,
+    ) {
+        let completed = else_body.map(|_| self.fresh_name("completed"));
+        let header = self.emit_condition(condition);
+        self.emit_loop(&header, body, else_body, &completed, &[]);
     }
 
     fn emit_local_item(&mut self, item: &Item) {
@@ -766,6 +951,30 @@ impl<'a> Emitter<'a> {
 
     // --------------------------------------------------------- expressions
 
+    /// Emits a literal, checking that the target can represent it.
+    ///
+    /// Go's `int` is 64 bits and Python integers are not, so an out-of-range
+    /// literal has no translation. Emitting it anyway produces a file that does
+    /// not compile, which is worse than reporting: the program looks supported
+    /// until something else tries to run it.
+    fn emit_literal(&mut self, span: Span, literal: &Literal) -> String {
+        if let Literal::Int(text) = literal
+            && let Some(digits) = plain_decimal(text)
+            && digits.parse::<i64>().is_err()
+        {
+            unsupported(
+                self.diagnostics,
+                span,
+                format!(
+                    "the integer literal `{text}`, which needs more than 64 bits; the target's \
+                     widest integer cannot hold it"
+                ),
+            );
+            return "0".to_string();
+        }
+        go_literal(literal)
+    }
+
     fn emit_pattern(&mut self, pattern: &Pattern) -> String {
         match &pattern.kind {
             PatternKind::Bind => pattern_name(pattern),
@@ -780,7 +989,7 @@ impl<'a> Emitter<'a> {
 
     fn emit_expr(&mut self, expr: &Expr) -> String {
         match &expr.kind {
-            ExprKind::Literal(literal) => go_literal(literal),
+            ExprKind::Literal(literal) => self.emit_literal(expr.span, literal),
             ExprKind::Path(path) => path
                 .segments
                 .iter()
@@ -791,7 +1000,14 @@ impl<'a> Emitter<'a> {
                 let operand = self.emit_expr(operand);
                 match op {
                     UnaryOp::Neg => format!("-{operand}"),
-                    UnaryOp::Not => format!("!{operand}"),
+                    UnaryOp::Not => {
+                        if matches!(expr.ty, Type::Bool) {
+                            format!("!{operand}")
+                        } else {
+                            let helper = self.use_helper("gsetTruthy");
+                            format!("!{helper}({operand})")
+                        }
+                    }
                     UnaryOp::BitNot => format!("^{operand}"),
                     _ => {
                         unsupported(self.diagnostics, expr.span, "this unary operator");
@@ -799,36 +1015,27 @@ impl<'a> Emitter<'a> {
                     }
                 }
             }
-            ExprKind::Binary { op, lhs, rhs } => {
-                let lhs = self.emit_expr(lhs);
-                let rhs = self.emit_expr(rhs);
-                match binary_symbol(*op) {
-                    Some(symbol) => format!("({lhs} {symbol} {rhs})"),
-                    None => {
-                        unsupported(self.diagnostics, expr.span, "this binary operator");
-                        format!("({lhs} /* unsupported */ {rhs})")
-                    }
-                }
-            }
-            ExprKind::Compare { op, lhs, rhs } => {
-                let lhs = self.emit_expr(lhs);
-                let rhs = self.emit_expr(rhs);
-                match comparison_symbol(*op) {
-                    Some(symbol) => format!("({lhs} {symbol} {rhs})"),
-                    None => {
-                        unsupported(self.diagnostics, expr.span, "this comparison");
-                        format!("({lhs} /* unsupported */ {rhs})")
-                    }
-                }
-            }
+            ExprKind::Binary { op, lhs, rhs } => self.emit_binary(expr.span, *op, lhs, rhs),
+            ExprKind::Compare { op, lhs, rhs } => self.emit_compare(expr.span, *op, lhs, rhs),
             ExprKind::Logical { op, lhs, rhs } => {
+                // `and` and `or` yield an operand, not a bool. Go's `&&` and `||`
+                // yield a bool, which is only the same value when both operands
+                // are bools; otherwise the operand itself has to survive.
+                let boolean = matches!(lhs.ty, Type::Bool) && matches!(rhs.ty, Type::Bool);
                 let lhs = self.emit_expr(lhs);
                 let rhs = self.emit_expr(rhs);
-                let symbol = match op {
-                    LogicalOp::And => "&&",
-                    LogicalOp::Or => "||",
+                if boolean {
+                    let symbol = match op {
+                        LogicalOp::And => "&&",
+                        LogicalOp::Or => "||",
+                    };
+                    return format!("({lhs} {symbol} {rhs})");
+                }
+                let helper = match op {
+                    LogicalOp::And => self.use_helper("gsetAnd"),
+                    LogicalOp::Or => self.use_helper("gsetOr"),
                 };
-                format!("({lhs} {symbol} {rhs})")
+                format!("{helper}({lhs}, {rhs})")
             }
             ExprKind::Call {
                 callee,
@@ -842,10 +1049,29 @@ impl<'a> Emitter<'a> {
                 named_args,
             } => self.emit_method_call(receiver, method, args, named_args, expr.span),
             ExprKind::Index { target, index } => {
-                let target = self.emit_expr(target);
-                let index = self.emit_expr(index);
-                format!("{target}[{index}]")
+                let target_text = self.emit_expr(target);
+                if concrete_type(target).is_none() {
+                    // An `interface{}` cannot be indexed in Go at all, and the
+                    // index may be negative, which `reflect` resolves itself.
+                    let helper = self.use_helper("gsetIndex");
+                    let index_text = self.emit_expr(index);
+                    return format!("{helper}({target_text}, {index_text})");
+                }
+                let index_text = self.emit_negative_index(expr.span, target, &target_text, index);
+                format!("{target_text}[{index_text}]")
             }
+            ExprKind::Slice {
+                target,
+                start,
+                end,
+                inclusive,
+            } => self.emit_slice(
+                expr.span,
+                target,
+                start.as_deref(),
+                end.as_deref(),
+                *inclusive,
+            ),
             ExprKind::Field { target, field } => {
                 let target = self.emit_expr(target);
                 format!("{target}.{field}")
@@ -853,14 +1079,20 @@ impl<'a> Emitter<'a> {
             ExprKind::List { elements } | ExprKind::Tuple { elements } => {
                 self.emit_sequence_literal(elements)
             }
+            ExprKind::Set { elements } => self.emit_set_literal(elements),
+            ExprKind::Map { entries } => self.emit_map_literal(entries),
             ExprKind::Lambda { params, body } => self.emit_lambda(params, body, expr.span),
-            ExprKind::Conditional { .. } => {
-                // Go has no ternary. A faithful expansion needs an IIFE, which
-                // is a later slice; reporting is better than an approximation
-                // that evaluates both branches.
-                unsupported(self.diagnostics, expr.span, "a conditional expression");
-                "nil".to_string()
-            }
+            ExprKind::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => self.emit_conditional(expr.span, condition, then_branch, else_branch),
+            ExprKind::Comprehension { .. } => self.emit_comprehension(expr),
+            ExprKind::Let {
+                pattern,
+                value,
+                body,
+            } => self.emit_let(expr.span, pattern, value, body),
             ExprKind::Format {
                 segments,
                 arguments,
@@ -891,12 +1123,29 @@ impl<'a> Emitter<'a> {
             let name = path.segments[0].as_ref();
             match name {
                 "print" => {
-                    self.needs_fmt = true;
+                    self.imports.insert("fmt");
                     return format!("fmt.Println({})", rendered.join(", "));
                 }
-                "len" => return format!("len({})", rendered.join(", ")),
+                "len" => {
+                    // `len` of an `interface{}` has no Go built-in form.
+                    if args
+                        .first()
+                        .is_some_and(|argument| concrete_type(argument).is_none())
+                    {
+                        let helper = self.use_helper("gsetLen");
+                        return format!("{helper}({})", rendered.join(", "));
+                    }
+                    return format!("len({})", rendered.join(", "));
+                }
+                // Python's `sorted` is stable and returns a new sequence, and a
+                // set of pairs is not something Go's `sort` can see through an
+                // `interface{}` without being told to.
+                "sorted" => {
+                    let helper = self.use_helper("gsetSort");
+                    return format!("{helper}({})", rendered.join(", "));
+                }
                 "str" => {
-                    self.needs_fmt = true;
+                    self.imports.insert("fmt");
                     return format!("fmt.Sprint({})", rendered.join(", "));
                 }
                 "int" => return format!("int({})", rendered.join(", ")),
@@ -915,6 +1164,14 @@ impl<'a> Emitter<'a> {
         format!("{callee}({})", rendered.join(", "))
     }
 
+    /// Emits a method call.
+    ///
+    /// Python's methods come from types that do not exist in Go, so most of them
+    /// are spelled with a standard library call or a helper rather than with a
+    /// method on the receiver. A method that mutates and returns nothing —
+    /// `append`, `extend`, `insert`, `sort`, `add` — becomes an assignment, and
+    /// only in statement position: in expression position there is nowhere to
+    /// put the new value, so it is reported instead of being dropped.
     fn emit_method_call(
         &mut self,
         receiver: &Expr,
@@ -926,26 +1183,865 @@ impl<'a> Emitter<'a> {
         if !named_args.is_empty() {
             unsupported(self.diagnostics, span, "keyword arguments");
         }
+        // Read before rendering: rendering borrows the emitter, and the
+        // expansion of a mutating method needs the receiver's type to name the
+        // slice or map it is assigning back to.
+        let receiver_type = concrete_type(receiver);
+        let mapping_like = is_mapping_like(receiver);
         let receiver = self.emit_expr(receiver);
+        // Read before rendering: an argument count decides which helper a method
+        // needs, and a rendered list cannot answer that.
+        let arity = args.len();
         let rendered: Vec<String> = args.iter().map(|arg| self.emit_expr(arg)).collect();
+        let args = rendered.join(", ");
         match method {
-            // Python's `xs.append(v)` mutates and returns nothing; Go's
-            // `append` returns the new slice and must be assigned by the
-            // caller. Emitting the call alone would drop the result, so it is
-            // reported rather than silently losing the append.
+            // ------------------------------------------------------------ strings
+            "upper" => self.call_std("strings", "ToUpper", &receiver),
+            "lower" => self.call_std("strings", "ToLower", &receiver),
+            "strip" => self.call_std("strings", "TrimSpace", &receiver),
+            // Python's default cutset is every whitespace character; Go's
+            // `TrimLeft` takes the set explicitly.
+            "lstrip" => format!("strings.TrimLeft({receiver}, \" \\t\\n\\r\\v\\f\")"),
+            "rstrip" => format!("strings.TrimRight({receiver}, \" \\t\\n\\r\\v\\f\")"),
+            "split" if arity == 0 => self.call_std("strings", "Fields", &receiver),
+            "split" => {
+                self.imports.insert("strings");
+                format!("strings.Split({receiver}, {args})")
+            }
+            "splitlines" => {
+                let helper = self.use_helper("gsetLines");
+                format!("{helper}({receiver})")
+            }
+            "join" => {
+                let helper = self.use_helper("gsetJoin");
+                format!("{helper}({receiver}, {args})")
+            }
+            "replace" => {
+                self.imports.insert("strings");
+                format!("strings.ReplaceAll({receiver}, {args})")
+            }
+            "startswith" => {
+                self.imports.insert("strings");
+                format!("strings.HasPrefix({receiver}, {args})")
+            }
+            "endswith" => {
+                self.imports.insert("strings");
+                format!("strings.HasSuffix({receiver}, {args})")
+            }
+            "find" => {
+                self.imports.insert("strings");
+                format!("strings.Index({receiver}, {args})")
+            }
+            "rfind" => {
+                self.imports.insert("strings");
+                format!("strings.LastIndex({receiver}, {args})")
+            }
+            // `str.count` counts substrings and `list.count` counts members, so
+            // the receiver's type picks the two apart.
+            "count" if receiver_type.as_deref().is_some_and(|ty| ty == "string") => {
+                self.imports.insert("strings");
+                format!("strings.Count({receiver}, {args})")
+            }
+            "count" => {
+                let helper = self.use_helper("gsetCount");
+                format!("{helper}({receiver}, {args})")
+            }
+            // ------------------------------------------------------------- lists
+            "index" => {
+                let helper = self.use_helper("gsetIndexOf");
+                format!("{helper}({receiver}, {args})")
+            }
+            // -------------------------------------------------------------- dicts
+            "get" => {
+                let helper = if arity > 1 {
+                    self.use_helper("gsetGetOr")
+                } else {
+                    self.use_helper("gsetGet")
+                };
+                format!("{helper}({receiver}, {args})")
+            }
+            "keys" => {
+                let helper = self.use_helper("gsetKeys");
+                format!("{helper}({receiver})")
+            }
+            "update" => {
+                let helper = self.use_helper("gsetUpdate");
+                let expansion = format!("{helper}({receiver}, {args})");
+                self.emit_mutation(span, method, &receiver, &receiver_type, expansion, true)
+            }
+            "values" => {
+                let helper = self.use_helper("gsetValues");
+                format!("{helper}({receiver})")
+            }
+            "items" => {
+                let helper = self.use_helper("gsetItems");
+                format!("{helper}({receiver})")
+            }
+            // ------------------------------------------------- mutating methods
+            "append" if arity == 0 => {
+                unsupported(self.diagnostics, span, "`.append` with no value to add");
+                format!("append({receiver})")
+            }
             "append" => {
-                unsupported(
-                    self.diagnostics,
-                    span,
-                    "`.append` because Go's `append` returns a new slice",
-                );
-                format!("append({receiver}, {})", rendered.join(", "))
+                let expansion = format!("append({receiver}, {args})");
+                self.emit_mutation(span, method, &receiver, &receiver_type, expansion, false)
+            }
+            "extend" => {
+                let helper = self.use_helper("gsetExtend");
+                let expansion = format!("{helper}({receiver}, {args})");
+                self.emit_mutation(span, method, &receiver, &receiver_type, expansion, true)
+            }
+            "insert" => {
+                let helper = self.use_helper("gsetInsert");
+                let expansion = format!("{helper}({receiver}, {args})");
+                self.emit_mutation(span, method, &receiver, &receiver_type, expansion, true)
+            }
+            "reverse" => {
+                let helper = self.use_helper("gsetReverse");
+                let expansion = format!("{helper}({receiver})");
+                self.emit_mutation(span, method, &receiver, &receiver_type, expansion, true)
+            }
+            "clear" => {
+                // Truncating a slice in place keeps the same backing array, which
+                // is what Python's `clear` does to a list's identity.
+                let expansion = format!("{receiver}[:0]");
+                self.emit_mutation(span, method, &receiver, &receiver_type, expansion, false)
+            }
+            "pop" => self.emit_pop(span, &receiver, &receiver_type),
+            "sort" => {
+                let helper = self.use_helper("gsetSort");
+                let statement = format!("{helper}({receiver})");
+                self.emit_statement_only(span, method, statement)
+            }
+            // A set's `add` is a map write, which is a statement and returns
+            // nothing, so it cannot be an expression either.
+            "add" => {
+                let statement = format!("{receiver}[{args}] = struct{{}}{{}}");
+                self.emit_statement_only(span, method, statement)
+            }
+            "discard" | "remove" if mapping_like => {
+                let statement = format!("delete({receiver}, {args})");
+                self.emit_statement_only(span, method, statement)
+            }
+            "remove" => {
+                let helper = self.use_helper("gsetRemove");
+                let expansion = format!("{helper}({receiver}, {args})");
+                self.emit_mutation(span, method, &receiver, &receiver_type, expansion, true)
             }
             _ => {
                 unsupported(self.diagnostics, span, describe_method(method));
-                format!("{receiver}.{method}({})", rendered.join(", "))
+                format!("{receiver}.{method}({args})")
             }
         }
+    }
+
+    /// Emits `xs.pop()`.
+    ///
+    /// Python returns the value and shortens the list; Go needs both, so the
+    /// expansion is a two-value assignment. `:=` only works when the value's
+    /// name is new, so the declared case has to use `=`.
+    fn emit_pop(&mut self, span: Span, receiver: &str, receiver_type: &Option<String>) -> String {
+        if receiver_type.is_none() {
+            unsupported(
+                self.diagnostics,
+                span,
+                "`.pop` on a value whose type this backend cannot name",
+            );
+            return "nil".to_string();
+        }
+        if !self.in_statement {
+            unsupported(
+                self.diagnostics,
+                span,
+                "`.pop` in expression position, which needs a statement to bind its result",
+            );
+            return "nil".to_string();
+        }
+        let helper = self.use_helper("gsetPop");
+        let popped = self.fresh_name("popped");
+        let rest = self.fresh_name("rest");
+        // `:=` only declares names that are new, so a name already in scope
+        // falls back to `var`, which redeclares. Both names come from one call:
+        // Go has no way to spread one multi-value call over two statements.
+        let declared = [
+            self.locals.contains(&popped) || self.globals.contains(&popped),
+            self.locals.contains(&rest) || self.globals.contains(&rest),
+        ]
+        .into_iter()
+        .any(|declared| declared);
+        self.locals.insert(popped.clone());
+        self.locals.insert(rest.clone());
+        let keyword = if declared { "var" } else { ":=" };
+        if declared {
+            self.out
+                .writeln(&format!("var {popped}, {rest} = {helper}({receiver})"));
+        } else {
+            self.out
+                .writeln(&format!("{popped}, {rest} {keyword} {helper}({receiver})"));
+        }
+        // The helper hands both back as `interface{}`s, so the collection goes
+        // back into its own type: without this the rest of the function sees a
+        // value it can no longer index, slice or take the length of.
+        let ty = receiver_type.as_deref().unwrap_or("interface{}");
+        self.out.writeln(&format!("{receiver} = {rest}.({ty})"));
+        popped
+    }
+
+    /// Emits an index, shifting Python's negative one into Go's bounds-checked form.
+    ///
+    /// `xs[-1]` is `xs[len(xs)-1]`, and Go rejects a negative constant outright.
+    /// The shift needs the length, so it repeats the target — sound only when
+    /// evaluating it twice cannot differ.
+    fn emit_negative_index(
+        &mut self,
+        span: Span,
+        target: &Expr,
+        target_text: &str,
+        index: &Expr,
+    ) -> String {
+        let negative = match &index.kind {
+            ExprKind::Literal(Literal::Int(text)) => match text.parse::<i64>() {
+                Ok(value) if value < 0 => Some(value.unsigned_abs() as usize),
+                _ => None,
+            },
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } => match &operand.kind {
+                ExprKind::Literal(Literal::Int(text)) => {
+                    text.parse::<i64>().ok().map(|v| v as usize)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(offset) = negative else {
+            return self.emit_expr(index);
+        };
+        if !is_repeatable(target) {
+            unsupported(
+                self.diagnostics,
+                span,
+                "a negative index on a value that would have to be evaluated twice",
+            );
+        }
+        format!("len({target_text}) - {offset}")
+    }
+
+    /// Emits `a if c else b`.
+    ///
+    /// Go has no ternary operator, so the only faithful expansion is an
+    /// immediately invoked function literal: one that returns from the arm the
+    /// condition selects. Evaluating both arms and picking afterwards would be
+    /// wrong for any arm with a call in it.
+    fn emit_conditional(
+        &mut self,
+        span: Span,
+        condition: &Expr,
+        then_branch: &Expr,
+        else_branch: &Expr,
+    ) -> String {
+        // A Go function literal needs one result type. Python's two arms agree
+        // only if the source's types agree, so anything else is `interface{}`
+        // rather than a guess at the wider of the two.
+        let result = match (&then_branch.ty, &else_branch.ty) {
+            (then, otherwise) if then == otherwise => {
+                named_type(then).unwrap_or_else(|| "interface{}".to_string())
+            }
+            _ => "interface{}".to_string(),
+        };
+        let condition = self.emit_condition(condition);
+        // The taken arm sits inside the `if`'s block, so anything it renders has
+        // to be indented as if it were there.
+        self.expression_depth += 1;
+        let then_value = self.emit_expr(then_branch);
+        self.expression_depth -= 1;
+        let else_value = self.emit_expr(else_branch);
+        let body = vec![
+            format!("if {condition} {{"),
+            format!("{}return {then_value}", indent(1)),
+            "}".to_string(),
+            format!("return {else_value}"),
+        ];
+        let tail = vec!["}()".to_string()];
+        let _ = span;
+        self.multiline(format!("func() {result} {{"), &body, &tail)
+    }
+
+    /// Emits a comprehension.
+    ///
+    /// The expansion is an immediately invoked function literal that accumulates
+    /// into a variable and returns it, which keeps the construct in expression
+    /// position where the source put it. A generator is *not* emitted this way:
+    /// Python's is lazy, and an eagerly built slice is a different program.
+    fn emit_comprehension(&mut self, expr: &Expr) -> String {
+        let span = expr.span;
+        let ExprKind::Comprehension {
+            kind,
+            element,
+            key,
+            value,
+            clauses,
+            condition,
+        } = &expr.kind
+        else {
+            return "nil".to_string();
+        };
+        let (kind, element, key, value, clauses, condition) = (
+            *kind,
+            element,
+            key.as_deref(),
+            value.as_deref(),
+            clauses,
+            condition.as_deref(),
+        );
+        if kind == ComprehensionKind::Generator {
+            unsupported(
+                self.diagnostics,
+                span,
+                "a generator, whose laziness is observable and which a built slice cannot express",
+            );
+            return "nil".to_string();
+        }
+        // A clause that destructures binds its names out of a pair, which is an
+        // `interface{}` at that point, so nothing downstream can claim a static
+        // element type without inventing one the program never said.
+        let destructures = clauses
+            .iter()
+            .any(|clause| matches!(clause.pattern.kind, PatternKind::Sequence));
+        let (result, zero) = match kind {
+            ComprehensionKind::List => {
+                let element = if destructures {
+                    "interface{}".to_string()
+                } else {
+                    element_go_type(element)
+                };
+                (format!("[]{element}"), format!("var out []{element}"))
+            }
+            ComprehensionKind::Set => {
+                let element = if destructures {
+                    "interface{}".to_string()
+                } else {
+                    element_go_type(element)
+                };
+                (
+                    format!("map[{element}]struct{{}}"),
+                    // A nil map cannot be written to, so the accumulator starts
+                    // as an empty one rather than a nil one.
+                    format!("out := map[{element}]struct{{}}{{}}"),
+                )
+            }
+            ComprehensionKind::Map => {
+                let key_type = if destructures {
+                    "interface{}".to_string()
+                } else {
+                    key.map_or_else(|| "string".to_string(), element_go_type)
+                };
+                let value_type = if destructures {
+                    "interface{}".to_string()
+                } else {
+                    value.map_or_else(|| "interface{}".to_string(), element_go_type)
+                };
+                (
+                    format!("map[{key_type}]{value_type}"),
+                    // A nil map cannot be written to, and a map built from
+                    // nothing has to start as one.
+                    format!("out := map[{key_type}]{value_type}{{}}"),
+                )
+            }
+            ComprehensionKind::Generator => unreachable!("reported above"),
+        };
+
+        // Lines are indented by their nesting depth here and the writer adds the
+        // statement's own level, because a multi-line expansion inside an
+        // expression has to line up with where the expression lands.
+        let mut body = vec![zero];
+        let mut depth = 0usize;
+        for clause in clauses {
+            let mut clause_names = Vec::new();
+            clause.pattern.collect_names(&mut clause_names);
+            let destructuring =
+                matches!(clause.pattern.kind, PatternKind::Sequence) && clause_names.len() == 2;
+            let single = clause.pattern.single_binding().map(ToString::to_string);
+            if !destructuring && single.is_none() {
+                unsupported(
+                    self.diagnostics,
+                    clause.span,
+                    "a comprehension clause that binds more than one name",
+                );
+                return "nil".to_string();
+            }
+            let helper = destructuring.then(|| self.use_helper("gsetPairs"));
+            // A clause over a value with no Go type of its own cannot be ranged
+            // over, so the elements are materialised first.
+            let dynamic = concrete_type(&clause.iterable).is_none();
+            let iterable_helper = dynamic.then(|| self.use_helper("gsetIter"));
+            let mut iterable = self.emit_expr(&clause.iterable);
+            if let Some(helper) = iterable_helper {
+                iterable = format!("{helper}({iterable})");
+            }
+            let (header, bindings) = match (&helper, single) {
+                (Some(helper), _) => {
+                    let (pair, bindings) = self.pair_bindings("pair", &clause_names);
+                    (format!("_, {pair} := range {helper}({iterable})"), bindings)
+                }
+                (None, Some(name)) => {
+                    self.locals.insert(name.clone());
+                    (format!("_, {name} := range {iterable}"), Vec::new())
+                }
+                (None, None) => (format!("range {iterable}"), Vec::new()),
+            };
+            body.push(format!("{}for {header} {{", indent(depth)));
+            depth += 1;
+            for binding in bindings {
+                body.push(format!("{}{binding}", indent(depth)));
+            }
+        }
+        let produce = match kind {
+            ComprehensionKind::List => {
+                // An argument of a call is indented two levels in by `gofmt`,
+                // because the call's own continuation lines already are.
+                self.expression_depth += 2;
+                let element = self.emit_expr(element);
+                self.expression_depth -= 2;
+                format!("out = append(out, {element})")
+            }
+            ComprehensionKind::Set => {
+                self.expression_depth += 1;
+                let element = self.emit_expr(element);
+                self.expression_depth -= 1;
+                format!("out[{element}] = struct{{}}{{}}")
+            }
+            ComprehensionKind::Map => {
+                let Some(key) = key else {
+                    unsupported(
+                        self.diagnostics,
+                        span,
+                        "a mapping comprehension with no key",
+                    );
+                    return "nil".to_string();
+                };
+                let Some(value) = value else {
+                    unsupported(
+                        self.diagnostics,
+                        span,
+                        "a mapping comprehension with no value",
+                    );
+                    return "nil".to_string();
+                };
+                self.expression_depth += 2;
+                let key = self.emit_expr(key);
+                let value = self.emit_expr(value);
+                self.expression_depth -= 2;
+                format!("out[{key}] = {value}")
+            }
+            ComprehensionKind::Generator => unreachable!("reported above"),
+        };
+        if let Some(condition) = condition {
+            let condition = self.emit_condition(condition);
+            body.push(format!("{}if {condition} {{", indent(depth)));
+            depth += 1;
+        }
+        body.push(format!("{}{produce}", indent(depth)));
+        while depth > 0 {
+            depth -= 1;
+            body.push(format!("{}}}", indent(depth)));
+        }
+        body.push("return out".to_string());
+        let tail = vec!["}()".to_string()];
+        self.multiline(format!("func() {result} {{"), &body, &tail)
+    }
+
+    /// Emits a scoped binding, such as Python's walrus.
+    ///
+    /// The binding is live for exactly one expression, which is also what the
+    /// function literal's scope gives: a `let` in an enclosing scope would
+    /// export the name to code that cannot see it.
+    fn emit_let(&mut self, span: Span, pattern: &Pattern, value: &Expr, body: &Expr) -> String {
+        let Some(name) = pattern.single_binding() else {
+            unsupported(
+                self.diagnostics,
+                span,
+                "a scoped binding of more than one name",
+            );
+            return "nil".to_string();
+        };
+        let result = concrete_type(body).unwrap_or_else(|| "interface{}".to_string());
+        let declared = self.locals.contains(name.as_ref()) || self.globals.contains(name.as_ref());
+        let operator = if declared { "=" } else { ":=" };
+        // Both lines are statements in the literal's own body, so a nested
+        // expansion inside either of them needs no extra depth.
+        let value = self.emit_expr(value);
+        let body = self.emit_expr(body);
+        let lines = vec![
+            format!("{name} {operator} {value}"),
+            format!("return {body}"),
+        ];
+        let tail = vec!["}()".to_string()];
+        self.multiline(format!("func() {result} {{"), &lines, &tail)
+    }
+
+    /// Joins a multi-line expansion into an expression.
+    ///
+    /// `gofmt` rewrites indentation but not line breaks, so the lines after the
+    /// first have to carry the indentation `gofmt` would give them: `body` sits
+    /// one level in from the line the expression starts on, and `tail` — the
+    /// closing `}()`, which ends the literal — sits at that line's own level.
+    /// The writer's level is that level, because an expression is always
+    /// rendered for the statement it is written into, never for a line that
+    /// already exists.
+    fn multiline(&self, header: String, body: &[String], tail: &[String]) -> String {
+        let level = self.out.level() + self.expression_depth;
+        let mut text = header;
+        for line in body {
+            text.push('\n');
+            for _ in 0..=level {
+                text.push('\t');
+            }
+            text.push_str(line);
+        }
+        for line in tail {
+            text.push('\n');
+            for _ in 0..level {
+                text.push('\t');
+            }
+            text.push_str(line);
+        }
+        text
+    }
+
+    /// Emits `strings.Name(receiver)`, recording the import.
+    fn call_std(&mut self, package: &'static str, function: &str, receiver: &str) -> String {
+        self.imports.insert(package);
+        format!("{package}.{function}({receiver})")
+    }
+
+    /// Emits a mutating method's expansion as an assignment back to the receiver.
+    ///
+    /// Go's slices and maps are values, so the method's result has to be written
+    /// back to the name it came from. That needs the receiver's concrete type:
+    /// the helper returns `interface{}`, and assigning that to a `[]int` is a
+    /// compile error, so the type assertion is spelled here.
+    fn emit_mutation(
+        &mut self,
+        span: Span,
+        method: &str,
+        receiver: &str,
+        receiver_type: &Option<String>,
+        expansion: String,
+        from_interface: bool,
+    ) -> String {
+        if !self.in_statement {
+            unsupported(
+                self.diagnostics,
+                span,
+                format!(
+                    "`.{method}`, which mutates the receiver and returns nothing, used where a \
+                     value is expected"
+                ),
+            );
+            return expansion;
+        }
+        let Some(ty) = receiver_type else {
+            unsupported(
+                self.diagnostics,
+                span,
+                format!("`.{method}` on a value whose type this backend cannot name"),
+            );
+            return expansion;
+        };
+        // A reflection helper hands back an `interface{}`, so the value goes
+        // back into the collection's own type. An expansion Go already typed
+        // needs no assertion, and an unparenthesised one would be read as a
+        // type assertion on the wrong value.
+        let assigned = if from_interface {
+            format!("({expansion}).({ty})")
+        } else {
+            expansion
+        };
+        self.out.writeln(&format!("{receiver} = {assigned}"));
+        "".to_string()
+    }
+
+    /// Emits a method whose whole effect is a statement.
+    fn emit_statement_only(&mut self, span: Span, method: &str, statement: String) -> String {
+        if !self.in_statement {
+            unsupported(
+                self.diagnostics,
+                span,
+                format!("`.{method}` in expression position, which returns nothing in the source"),
+            );
+            return "nil".to_string();
+        }
+        self.out.writeln(&statement);
+        "".to_string()
+    }
+
+    /// A name that is not yet in scope, for a binding the expansion introduces.
+    fn fresh_name(&mut self, stem: &str) -> String {
+        let mut candidate = stem.to_string();
+        let mut counter = 1;
+        while self.locals.contains(&candidate) || self.globals.contains(&candidate) {
+            candidate = format!("{stem}{counter}");
+            counter += 1;
+        }
+        candidate
+    }
+
+    fn emit_binary(&mut self, span: Span, op: BinaryOp, lhs: &Expr, rhs: &Expr) -> String {
+        // `//` and `**` have no Go operator, and Go's own `/` disagrees with
+        // Python's `//` for negative operands, so both go through a helper that
+        // is emitted only when a program uses them.
+        match op {
+            BinaryOp::FloorDiv => {
+                // Go's integer division truncates and a generic helper cannot
+                // take floats, so a float operand needs its own.
+                let floating = matches!(&lhs.ty, Type::Float) || matches!(&rhs.ty, Type::Float);
+                let helper = if floating {
+                    self.use_helper("gsetFloatFloorDiv")
+                } else {
+                    self.use_helper("gsetFloorDiv")
+                };
+                let lhs = self.emit_expr(lhs);
+                let rhs = self.emit_expr(rhs);
+                return format!("{helper}({lhs}, {rhs})");
+            }
+            BinaryOp::Pow => return self.emit_power(span, lhs, rhs),
+            _ => {}
+        }
+        let lhs = self.emit_expr(lhs);
+        let rhs = self.emit_expr(rhs);
+        match binary_symbol(op) {
+            Some(symbol) => format!("({lhs} {symbol} {rhs})"),
+            None => {
+                unsupported(self.diagnostics, span, "this binary operator");
+                format!("({lhs} /* unsupported */ {rhs})")
+            }
+        }
+    }
+
+    /// Emits `a ** b`.
+    ///
+    /// Python's `**` returns an int when both operands are ints and a float
+    /// otherwise, and Go has neither an integer power operator nor a uniform
+    /// one, so the operand types decide which is emitted. An untyped operand
+    /// cannot be resolved here: `gset-semantic` runs before this and would have
+    /// inferred a type, so reaching `Unknown` means the source really did
+    /// compute a value of unknown type.
+    fn emit_power(&mut self, span: Span, lhs: &Expr, rhs: &Expr) -> String {
+        let known_int = matches!(&lhs.ty, Type::Int(_)) && matches!(&rhs.ty, Type::Int(_));
+        let known_float = matches!(&lhs.ty, Type::Float) || matches!(&rhs.ty, Type::Float);
+        let unknown = matches!(&lhs.ty, Type::Unknown(_)) || matches!(&rhs.ty, Type::Unknown(_));
+        if known_float {
+            self.imports.insert("math");
+            let lhs = self.emit_expr(lhs);
+            let rhs = self.emit_expr(rhs);
+            return format!("math.Pow({lhs}, {rhs})");
+        }
+        // An exponent that is not a non-negative literal may be negative, and
+        // Python's answer to a negative exponent is a float while Go's loop
+        // would answer 1, so only a known non-negative one stays integral.
+        let maybe_negative = !matches!(literal_bound(rhs), Some(bound) if bound >= 0);
+        if (known_int || unknown) && !maybe_negative {
+            let helper = self.use_helper("gsetIntPow");
+            let lhs = self.emit_expr(lhs);
+            let rhs = self.emit_expr(rhs);
+            return format!("{helper}({lhs}, {rhs})");
+        }
+        if known_int || known_float || unknown {
+            let helper = self.use_helper("gsetFloatPow");
+            let lhs = self.emit_expr(lhs);
+            let rhs = self.emit_expr(rhs);
+            return format!("{helper}({lhs}, {rhs})");
+        }
+        unsupported(
+            self.diagnostics,
+            span,
+            "a `**` whose operand types are neither int nor float",
+        );
+        "0".to_string()
+    }
+
+    fn emit_compare(&mut self, span: Span, op: ComparisonOp, lhs: &Expr, rhs: &Expr) -> String {
+        // `in` and `not in` are containment, not comparison, and Go has no
+        // operator for either at any element type.
+        match op {
+            ComparisonOp::In | ComparisonOp::NotIn => {
+                // `item in collection` reads the collection second, and the
+                // helper takes the collection first, so the operands swap here.
+                let helper = self.use_helper("gsetContains");
+                let item = self.emit_expr(lhs);
+                let collection = self.emit_expr(rhs);
+                let call = format!("{helper}({collection}, {item})");
+                return if op == ComparisonOp::In {
+                    call
+                } else {
+                    format!("!{call}")
+                };
+            }
+            _ => {}
+        }
+        let lhs = self.emit_expr(lhs);
+        let rhs = self.emit_expr(rhs);
+        match comparison_symbol(op) {
+            Some(symbol) => format!("({lhs} {symbol} {rhs})"),
+            None => {
+                unsupported(self.diagnostics, span, "this comparison");
+                format!("({lhs} /* unsupported */ {rhs})")
+            }
+        }
+    }
+
+    /// Binds the names of a destructuring pattern from one pair value.
+    ///
+    /// A Go `range` over pairs yields the pair whole, so the names have to be
+    /// taken from it one index at a time. The pair itself is materialised into a
+    /// name first, because an expression cannot be indexed twice in a `:=`.
+    fn pair_bindings(
+        &mut self,
+        stem: &str,
+        names: &[std::sync::Arc<str>],
+    ) -> (String, Vec<String>) {
+        let pair = self.fresh_name(stem);
+        self.locals.insert(pair.clone());
+        let bindings = names
+            .iter()
+            .enumerate()
+            .flat_map(|(index, name)| {
+                self.locals.insert(name.to_string());
+                // Go refuses a declared-and-unused variable and Python does not,
+                // and whether the body uses the name is not the emitter's to
+                // decide, so the binding is always discarded explicitly.
+                [format!("{name} := {pair}[{index}]"), format!("_ = {name}")]
+            })
+            .collect();
+        (pair, bindings)
+    }
+
+    /// Emits a slice bound, which the runtime helper reads as a plain int.
+    fn emit_bound(&mut self, bound: &Expr) -> String {
+        self.emit_expr(bound)
+    }
+
+    fn emit_slice(
+        &mut self,
+        span: Span,
+        target_expr: &Expr,
+        start: Option<&Expr>,
+        end: Option<&Expr>,
+        inclusive: bool,
+    ) -> String {
+        // A slice of a value the source never typed has no Go operand form at
+        // all — `interface{}` cannot be sliced — so the bounds and the length
+        // are resolved at runtime instead.
+        if concrete_type(target_expr).is_none() {
+            let helper = self.use_helper("gsetSlice");
+            let target = self.emit_expr(target_expr);
+            let start = match start {
+                Some(start) => self.emit_bound(start),
+                None => "0".to_string(),
+            };
+            let end = match end {
+                Some(end) if inclusive => match literal_bound(end) {
+                    Some(bound) => (bound + 1).to_string(),
+                    None => {
+                        unsupported(
+                            self.diagnostics,
+                            span,
+                            "a slice with a computed inclusive bound",
+                        );
+                        self.emit_expr(end)
+                    }
+                },
+                Some(end) => self.emit_bound(end),
+                // The helper treats a bound past the end as the length, so an
+                // omitted one is just an impossible one.
+                None => format!("len({target})"),
+            };
+            return format!("{helper}({target}, {start}, {end})");
+        }
+        // An omitted bound has to become a real Go operand, and `len(target)`
+        // repeats `target`. Repeating it is only sound when evaluating it twice
+        // cannot differ, so anything with a call or an index in it is reported.
+        let repeatable = is_repeatable(target_expr);
+        if !repeatable {
+            unsupported(
+                self.diagnostics,
+                target_expr.span,
+                "a slice of a value that would have to be evaluated twice",
+            );
+        }
+        let target = self.emit_expr(target_expr);
+        let start = match start {
+            Some(start) => self.emit_negative_index(span, target_expr, &target, start),
+            None => "0".to_string(),
+        };
+        let end = match end {
+            None => format!("len({target})"),
+            Some(end) if inclusive => {
+                // Python's inclusive end is one past Go's exclusive one. Only a
+                // literal bound can be shifted here; anything else needs a
+                // temporary, which expression position cannot hold.
+                if let ExprKind::Literal(Literal::Int(text)) = &end.kind
+                    && let Ok(bound) = text.parse::<i64>()
+                {
+                    (bound + 1).to_string()
+                } else {
+                    unsupported(
+                        self.diagnostics,
+                        span,
+                        "a slice with a computed inclusive bound",
+                    );
+                    self.emit_expr(end)
+                }
+            }
+            Some(end) => self.emit_expr(end),
+        };
+        format!("{target}[{start}:{end}]")
+    }
+
+    fn emit_set_literal(&mut self, elements: &[Expr]) -> String {
+        // A Go set is a map whose value carries no information.
+        let element_type = sequence_element_type(elements);
+        if elements.is_empty() {
+            return format!("map[{element_type}]struct{{}}{{}}");
+        }
+        let rendered: Vec<String> = elements
+            .iter()
+            .map(|element| {
+                let element = self.emit_expr(element);
+                format!("{element}: {{}}")
+            })
+            .collect();
+        format!("map[{element_type}]struct{{}}{{{}}}", rendered.join(", "))
+    }
+
+    fn emit_map_literal(&mut self, entries: &[NamedArg]) -> String {
+        // The IR's mappings are string-keyed, which the frontend flags when a
+        // source key is not a string, so the key here is the source's key.
+        let mut value_type: Option<String> = None;
+        for entry in entries {
+            let this = literal_element_type(&entry.value);
+            match &value_type {
+                None => value_type = Some(this),
+                Some(existing) if *existing == this => {}
+                Some(_) => {
+                    value_type = Some("interface{}".to_string());
+                }
+            }
+        }
+        let value_type = value_type.unwrap_or_else(|| "interface{}".to_string());
+        if entries.is_empty() {
+            return format!("map[string]{value_type}{{}}");
+        }
+        let rendered: Vec<String> = entries
+            .iter()
+            .map(|entry| {
+                let value = self.emit_expr(&entry.value);
+                format!("{}: {value}", go_string(&entry.name))
+            })
+            .collect();
+        format!("map[string]{value_type}{{{}}}", rendered.join(", "))
     }
 
     fn emit_lambda(&mut self, params: &[Pattern], body: &Expr, span: Span) -> String {
@@ -976,6 +2072,13 @@ impl<'a> Emitter<'a> {
         format!("[]{element_type}{{{}}}", rendered.join(", "))
     }
 
+    /// Emits an interpolated string.
+    ///
+    /// Python's f-string becomes one `fmt.Sprintf` rather than a chain of `+`
+    /// concatenations. Concatenation would be equivalent, but it is not
+    /// `gofmt`-stable: the formatter removes the spaces around a `+` that sits
+    /// inside a call, so the emitter's output would differ from its input after
+    /// a formatting pass. One call is also closer to what the source says.
     fn emit_format(
         &mut self,
         segments: &[String],
@@ -990,25 +2093,679 @@ impl<'a> Emitter<'a> {
                 "a format specifier, which needs a formatting call this backend does not yet emit",
             );
         }
-        let mut parts: Vec<String> = Vec::new();
+        if arguments.is_empty() {
+            // No interpolation, so the segments are the whole string and a
+            // format verb would only add a way to be wrong.
+            let text: String = segments.concat();
+            return go_string(&text);
+        }
+        let mut template = String::new();
         for (index, segment) in segments.iter().enumerate() {
-            if !segment.is_empty() {
-                parts.push(go_string(segment));
-            }
-            if let Some(argument) = arguments.get(index) {
-                self.needs_fmt = true;
-                let argument = self.emit_expr(argument);
-                parts.push(format!("fmt.Sprint({argument})"));
+            // A literal percent has to survive as a percent, or a string
+            // containing one would print the next argument twice.
+            template.push_str(&segment.replace('%', "%%"));
+            if arguments.get(index).is_some() {
+                template.push_str("%v");
             }
         }
-        if parts.is_empty() {
-            return "\"\"".to_string();
-        }
-        parts.join(" + ")
+        let rendered: Vec<String> = arguments.iter().map(|arg| self.emit_expr(arg)).collect();
+        self.imports.insert("fmt");
+        format!(
+            "fmt.Sprintf({}, {})",
+            go_string(&template),
+            rendered.join(", ")
+        )
     }
 }
 
+/// A function the emitted program may call that Go does not provide.
+///
+/// Helpers are emitted on demand. A program that never floors a division must
+/// not carry the floor helper: an unused function is not a Go compile error,
+/// but an unused *import* is, and emitting a helper set unconditionally would
+/// force every program to import `reflect` and `strings`.
+struct Helper {
+    /// The name a program refers to it by.
+    name: &'static str,
+    /// The emitted signature, without the opening brace.
+    signature: &'static str,
+    /// Packages it needs, which are added to the program's imports.
+    imports: &'static [&'static str],
+    /// Helpers it calls, which must be emitted alongside it.
+    deps: &'static [&'static str],
+    /// Its body, one source line per entry.
+    body: &'static [&'static str],
+}
+
+/// Every helper this backend can emit.
+fn helpers() -> &'static [Helper] {
+    &[
+        Helper {
+            name: "gsetFloorDiv",
+            signature: "func gsetFloorDiv[T ~int | ~int64](a, b T) T",
+            imports: &[],
+            deps: &[],
+            body: &[
+                "// Go truncates towards zero and Python floors towards negative",
+                "// infinity, so a division that does not divide evenly is one",
+                "// too large whenever the operands have different signs.",
+                "q := a / b",
+                "if (a%b != 0) && ((a < 0) != (b < 0)) {",
+                "\tq--",
+                "}",
+                "return q",
+            ],
+        },
+        Helper {
+            name: "gsetFloatFloorDiv",
+            signature: "func gsetFloatFloorDiv(a, b float64) float64",
+            imports: &["math"],
+            deps: &[],
+            body: &["return math.Floor(a / b)"],
+        },
+        Helper {
+            name: "gsetFloatPow",
+            signature: "func gsetFloatPow(base, exponent float64) float64",
+            imports: &["math"],
+            deps: &[],
+            body: &[
+                "// Python keeps a negative exponent exact in a float; Go's `pow`",
+                "// with integer arguments would truncate, and Go has no `**` at",
+                "// all, so both the negative and the float cases land here.",
+                "return math.Pow(base, exponent)",
+            ],
+        },
+        Helper {
+            name: "gsetIntPow",
+            signature: "func gsetIntPow(base, exponent int64) int64",
+            imports: &[],
+            deps: &[],
+            body: &[
+                "// A negative exponent would silently come out as 1 here, which is",
+                "// not Python's answer, so the emitter only sends non-negative",
+                "// exponents and sends everything else to `gsetFloatPow`.",
+                "result := int64(1)",
+                "for i := int64(0); i < exponent; i++ {",
+                "\tresult *= base",
+                "}",
+                "return result",
+            ],
+        },
+        Helper {
+            name: "gsetJoin",
+            signature: "func gsetJoin(separator, items interface{}) string",
+            imports: &["fmt", "reflect", "strings"],
+            deps: &[],
+            body: &[
+                "// `separator.join(items)` renders each element as a string, which",
+                "// is what Python does and what a []string cannot be trusted to",
+                "// do, because the source never said the elements were strings.",
+                "value := reflect.ValueOf(items)",
+                "parts := make([]string, 0, value.Len())",
+                "for index := 0; index < value.Len(); index++ {",
+                "\tparts = append(parts, fmt.Sprint(value.Index(index).Interface()))",
+                "}",
+                "return strings.Join(parts, fmt.Sprint(separator))",
+            ],
+        },
+        Helper {
+            name: "gsetCount",
+            signature: "func gsetCount(collection, item interface{}) int",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "total := 0",
+                "for index := 0; index < value.Len(); index++ {",
+                "\tif reflect.DeepEqual(value.Index(index).Interface(), item) {",
+                "\t\ttotal++",
+                "\t}",
+                "}",
+                "return total",
+            ],
+        },
+        Helper {
+            name: "gsetPairs",
+            signature: "func gsetPairs(collection interface{}) [][2]interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "// `for k, v in d.items()` needs the pairs to be addressable so the",
+                "// two names can be bound from them, and a Go map yields keys only.",
+                "// A list of tuples is the same request in Go's own types, so one",
+                "// helper answers both rather than making the caller know which.",
+                "value := reflect.ValueOf(collection)",
+                "pairs := make([][2]interface{}, 0, value.Len())",
+                "switch value.Kind() {",
+                "case reflect.Map:",
+                "\tfor _, key := range value.MapKeys() {",
+                "\t\tpairs = append(pairs, [2]interface{}{key.Interface(), value.MapIndex(key).Interface()})",
+                "\t}",
+                "case reflect.Slice, reflect.Array:",
+                "\tfor index := 0; index < value.Len(); index++ {",
+                "\t\telement := value.Index(index)",
+                "\t\tif element.Kind() == reflect.Interface {",
+                "\t\t\telement = element.Elem()",
+                "\t\t}",
+                "\t\tif element.Kind() != reflect.Slice && element.Kind() != reflect.Array {",
+                "\t\t\tpanic(\"gset: a destructuring loop binding over something that is not a collection of pairs\")",
+                "\t\t}",
+                "\t\tpairs = append(pairs, [2]interface{}{element.Index(0).Interface(), element.Index(1).Interface()})",
+                "\t}",
+                "}",
+                "return pairs",
+            ],
+        },
+        Helper {
+            name: "gsetLen",
+            signature: "func gsetLen(collection interface{}) int",
+            imports: &["reflect"],
+            deps: &[],
+            body: &["return reflect.ValueOf(collection).Len()"],
+        },
+        Helper {
+            name: "gsetIter",
+            signature: "func gsetIter(collection interface{}) []interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "// Go's `range` cannot walk an `interface{}`, and iterating a",
+                "// mapping yields its keys, which is what Python does too.",
+                "value := reflect.ValueOf(collection)",
+                "items := make([]interface{}, 0, value.Len())",
+                "if value.Kind() == reflect.Map {",
+                "\tfor _, key := range value.MapKeys() {",
+                "\t\titems = append(items, key.Interface())",
+                "\t}",
+                "\treturn items",
+                "}",
+                "for index := 0; index < value.Len(); index++ {",
+                "\titems = append(items, value.Index(index).Interface())",
+                "}",
+                "return items",
+            ],
+        },
+        Helper {
+            name: "gsetIndex",
+            signature: "func gsetIndex(collection interface{}, index interface{}) interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "// A negative index counts from the end, as it does in Python, and",
+                "// both a slice and a map can be indexed with one call.",
+                "value := reflect.ValueOf(collection)",
+                "position := 0",
+                "switch wanted := index.(type) {",
+                "case int:",
+                "\tposition = wanted",
+                "case int64:",
+                "\tposition = int(wanted)",
+                "}",
+                "if position < 0 {",
+                "\tposition += value.Len()",
+                "}",
+                "if value.Kind() == reflect.Map {",
+                "\treturn value.MapIndex(reflect.ValueOf(index)).Interface()",
+                "}",
+                "return value.Index(position).Interface()",
+            ],
+        },
+        Helper {
+            name: "gsetSlice",
+            signature: "func gsetSlice(collection interface{}, start, end int) interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "// A negative bound counts from the end, as it does in Python, and",
+                "// an end past the length is the length. Go rejects both outright,",
+                "// so the arithmetic has to happen here where the length is known.",
+                "value := reflect.ValueOf(collection)",
+                "length := value.Len()",
+                "if start < 0 {",
+                "\tstart += length",
+                "}",
+                "if end < 0 {",
+                "\tend += length",
+                "}",
+                "if end > length {",
+                "\tend = length",
+                "}",
+                "if start < 0 {",
+                "\tstart = 0",
+                "}",
+                "if end < start {",
+                "\tend = start",
+                "}",
+                "return value.Slice(start, end).Interface()",
+            ],
+        },
+        Helper {
+            name: "gsetUpdate",
+            signature: "func gsetUpdate(collection, other interface{}) interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "incoming := reflect.ValueOf(other)",
+                "for _, key := range incoming.MapKeys() {",
+                "\tvalue.SetMapIndex(key, incoming.MapIndex(key))",
+                "}",
+                "return value.Interface()",
+            ],
+        },
+        Helper {
+            name: "gsetLines",
+            signature: "func gsetLines(text string) []string",
+            imports: &["strings"],
+            deps: &[],
+            body: &[
+                "trimmed := strings.TrimRight(text, \"\\n\")",
+                "if trimmed == \"\" {",
+                "\treturn []string{}",
+                "}",
+                "return strings.Split(trimmed, \"\\n\")",
+            ],
+        },
+        Helper {
+            name: "gsetIndexOf",
+            signature: "func gsetIndexOf(collection, item interface{}) int",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "for index := 0; index < value.Len(); index++ {",
+                "\tif reflect.DeepEqual(value.Index(index).Interface(), item) {",
+                "\t\treturn index",
+                "\t}",
+                "}",
+                "// Python raises `ValueError` here; Go has no error in an",
+                "// expression, so the sentinel every caller can test for is -1.",
+                "return -1",
+            ],
+        },
+        Helper {
+            name: "gsetGet",
+            signature: "func gsetGet(collection, key interface{}) interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "if value.Kind() != reflect.Map {",
+                "\treturn nil",
+                "}",
+                "found := value.MapIndex(reflect.ValueOf(key))",
+                "if !found.IsValid() {",
+                "\treturn nil",
+                "}",
+                "return found.Interface()",
+            ],
+        },
+        Helper {
+            name: "gsetGetOr",
+            signature: "func gsetGetOr(collection, key, fallback interface{}) interface{}",
+            imports: &[],
+            deps: &["gsetGet"],
+            body: &[
+                "if found := gsetGet(collection, key); found != nil {",
+                "\treturn found",
+                "}",
+                "return fallback",
+            ],
+        },
+        Helper {
+            name: "gsetKeys",
+            signature: "func gsetKeys(collection interface{}) []interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "keys := make([]interface{}, 0, value.Len())",
+                "for _, key := range value.MapKeys() {",
+                "\tkeys = append(keys, key.Interface())",
+                "}",
+                "return keys",
+            ],
+        },
+        Helper {
+            name: "gsetValues",
+            signature: "func gsetValues(collection interface{}) []interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "values := make([]interface{}, 0, value.Len())",
+                "for _, key := range value.MapKeys() {",
+                "\tvalues = append(values, value.MapIndex(key).Interface())",
+                "}",
+                "return values",
+            ],
+        },
+        Helper {
+            name: "gsetItems",
+            signature: "func gsetItems(collection interface{}) [][2]interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "// A pair, so `for pair in d.items()` and `d.items()[0][0]` both",
+                "// work; a Go map cannot be ranged over as pairs at all. The pair",
+                "// is a Go pair rather than a slice, so what a clause binds from it",
+                "// is indexable without an assertion.",
+                "value := reflect.ValueOf(collection)",
+                "items := make([][2]interface{}, 0, value.Len())",
+                "for _, key := range value.MapKeys() {",
+                "\titems = append(items, [2]interface{}{key.Interface(), value.MapIndex(key).Interface()})",
+                "}",
+                "return items",
+            ],
+        },
+        Helper {
+            name: "gsetExtend",
+            signature: "func gsetExtend(collection, items interface{}) interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "incoming := reflect.ValueOf(items)",
+                "element := value.Type().Elem()",
+                "total := value.Len() + incoming.Len()",
+                "grown := reflect.MakeSlice(value.Type(), total, total)",
+                "reflect.Copy(grown.Slice(0, value.Len()), value)",
+                "for index := 0; index < incoming.Len(); index++ {",
+                "\titem := incoming.Index(index)",
+                "\tif !item.Type().AssignableTo(element) {",
+                "\t\tif !item.Type().ConvertibleTo(element) {",
+                "\t\t\tpanic(\"gset: an extension has an element type the collection cannot hold\")",
+                "\t\t}",
+                "\t\titem = item.Convert(element)",
+                "\t}",
+                "\tgrown.Index(value.Len() + index).Set(item)",
+                "}",
+                "return grown.Interface()",
+            ],
+        },
+        Helper {
+            name: "gsetInsert",
+            signature: "func gsetInsert(collection interface{}, index int, item interface{}) interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "total := value.Len() + 1",
+                "grown := reflect.MakeSlice(value.Type(), total, total)",
+                "reflect.Copy(grown.Slice(0, index), value.Slice(0, index))",
+                "element := reflect.ValueOf(item)",
+                "if !element.Type().AssignableTo(value.Type().Elem()) {",
+                "\tpanic(\"gset: an inserted value has a type the collection cannot hold\")",
+                "}",
+                "grown.Index(index).Set(element)",
+                "reflect.Copy(grown.Slice(index+1, total), value.Slice(index, value.Len()))",
+                "return grown.Interface()",
+            ],
+        },
+        Helper {
+            name: "gsetRemove",
+            signature: "func gsetRemove(collection interface{}, item interface{}) interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "for index := 0; index < value.Len(); index++ {",
+                "\tif reflect.DeepEqual(value.Index(index).Interface(), item) {",
+                "\t\ttrimmed := reflect.MakeSlice(value.Type(), value.Len()-1, value.Len()-1)",
+                "\t\treflect.Copy(trimmed.Slice(0, index), value.Slice(0, index))",
+                "\t\treflect.Copy(trimmed.Slice(index, trimmed.Len()), value.Slice(index+1, value.Len()))",
+                "\t\treturn trimmed.Interface()",
+                "\t}",
+                "}",
+                "return value.Interface()",
+            ],
+        },
+        Helper {
+            name: "gsetReverse",
+            signature: "func gsetReverse(collection interface{}) interface{}",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "reversed := reflect.MakeSlice(value.Type(), value.Len(), value.Len())",
+                "for index := 0; index < value.Len(); index++ {",
+                "\treversed.Index(value.Len()-1-index).Set(value.Index(index))",
+                "}",
+                "return reversed.Interface()",
+            ],
+        },
+        Helper {
+            name: "gsetSort",
+            signature: "func gsetSort(collection interface{}) []interface{}",
+            imports: &["reflect", "sort"],
+            deps: &["gsetLess"],
+            body: &[
+                "// Python's sort is stable, so equal keys keep the order they came",
+                "// in; `sort.Slice` is not, which would make a program that sorts",
+                "// two fields print something different from run to run.",
+                "value := reflect.ValueOf(collection)",
+                "sort.SliceStable(value.Interface(), func(left, right int) bool {",
+                "\treturn gsetLess(value.Index(left).Interface(), value.Index(right).Interface())",
+                "})",
+                "// A dynamic sort cannot return the collection's own type, and an",
+                "// `interface{}` cannot be ranged over, so what it hands back is a",
+                "// slice of its elements.",
+                "items := make([]interface{}, 0, value.Len())",
+                "for index := 0; index < value.Len(); index++ {",
+                "\titems = append(items, value.Index(index).Interface())",
+                "}",
+                "return items",
+            ],
+        },
+        Helper {
+            name: "gsetLess",
+            signature: "func gsetLess(left, right interface{}) bool",
+            imports: &[],
+            deps: &[],
+            body: &[
+                "// Python sorts values of one type, and the source's element type is",
+                "// not in the program text, so the comparison is decided by the",
+                "// dynamic type and an incomparable pair keeps its input order.",
+                "switch first := left.(type) {",
+                "case int:",
+                "\tsecond, ok := right.(int)",
+                "\treturn ok && first < second",
+                "case int64:",
+                "\tsecond, ok := right.(int64)",
+                "\treturn ok && first < second",
+                "case float64:",
+                "\tsecond, ok := right.(float64)",
+                "\treturn ok && first < second",
+                "case string:",
+                "\tsecond, ok := right.(string)",
+                "\treturn ok && first < second",
+                "case bool:",
+                "\tsecond, ok := right.(bool)",
+                "\treturn !ok && !first && second",
+                "}",
+                "return false",
+            ],
+        },
+        Helper {
+            name: "gsetPop",
+            signature: "func gsetPop(collection interface{}) (interface{}, interface{})",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "value := reflect.ValueOf(collection)",
+                "last := value.Len() - 1",
+                "return value.Index(last).Interface(), value.Slice(0, last).Interface()",
+            ],
+        },
+        Helper {
+            name: "gsetTruthy",
+            signature: "func gsetTruthy(value interface{}) bool",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "// Python's truthiness is a runtime property of the value, and a Go",
+                "// condition is a static type. Emitting `if value` is only correct",
+                "// for a bool, so everything else asks here.",
+                "if value == nil {",
+                "\treturn false",
+                "}",
+                "reflected := reflect.ValueOf(value)",
+                "switch reflected.Kind() {",
+                "case reflect.Bool:",
+                "\treturn reflected.Bool()",
+                "case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:",
+                "\treturn reflected.Int() != 0",
+                "case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:",
+                "\treturn reflected.Uint() != 0",
+                "case reflect.Float32, reflect.Float64:",
+                "\treturn reflected.Float() != 0",
+                "case reflect.String:",
+                "\treturn reflected.Len() != 0",
+                "case reflect.Slice, reflect.Map, reflect.Array:",
+                "\treturn reflected.Len() != 0",
+                "case reflect.Chan, reflect.Func, reflect.Pointer, reflect.Interface:",
+                "\treturn !reflected.IsNil()",
+                "}",
+                "return true",
+            ],
+        },
+        Helper {
+            name: "gsetOr",
+            signature: "func gsetOr(left, right interface{}) interface{}",
+            imports: &[],
+            deps: &["gsetTruthy"],
+            body: &[
+                "// `or` yields an operand, not a bool, which is why Go's `||` cannot",
+                "// stand in for it once either operand is not a bool.",
+                "if gsetTruthy(left) {",
+                "\treturn left",
+                "}",
+                "return right",
+            ],
+        },
+        Helper {
+            name: "gsetAnd",
+            signature: "func gsetAnd(left, right interface{}) interface{}",
+            imports: &[],
+            deps: &["gsetTruthy"],
+            body: &[
+                "if gsetTruthy(left) {",
+                "\treturn right",
+                "}",
+                "return left",
+            ],
+        },
+        Helper {
+            name: "gsetContains",
+            signature: "func gsetContains(collection, item interface{}) bool",
+            imports: &["reflect", "strings"],
+            deps: &[],
+            body: &[
+                "// `in` is a protocol over every container Python has and one",
+                "// operator Go lacks, so it is decided by kind rather than by",
+                "// a static type the source never gave us.",
+                "if collection == nil {",
+                "\treturn false",
+                "}",
+                "value := reflect.ValueOf(collection)",
+                "switch value.Kind() {",
+                "case reflect.String:",
+                "\tother, ok := item.(string)",
+                "\tif !ok {",
+                "\t\treturn false",
+                "\t}",
+                "\treturn strings.Contains(value.String(), other)",
+                "case reflect.Slice, reflect.Array:",
+                "\tfor index := 0; index < value.Len(); index++ {",
+                "\t\tif reflect.DeepEqual(value.Index(index).Interface(), item) {",
+                "\t\t\treturn true",
+                "\t\t}",
+                "\t}",
+                "\treturn false",
+                "case reflect.Map:",
+                "\tfor _, key := range value.MapKeys() {",
+                "\t\tif reflect.DeepEqual(key.Interface(), item) {",
+                "\t\t\treturn true",
+                "\t\t}",
+                "\t}",
+                "\treturn false",
+                "\tdefault:",
+                "\treturn false",
+                "}",
+            ],
+        },
+    ]
+}
+
 // ------------------------------------------------------------- free helpers
+
+/// The Go type of a value whose type the source fixed, if it has one.
+///
+/// `Unknown` means the source left it dynamic, and naming a concrete type for
+/// it is the guess this backend refuses to make.
+fn concrete_type(expr: &Expr) -> Option<String> {
+    named_type(&expr.ty)
+}
+
+/// The Go type of `ty`, unless the source left it dynamic.
+///
+/// A type that renders as `interface{}` counts as dynamic even when inference
+/// named it: a tuple of unlike elements has no Go spelling, so it reaches Go as
+/// an `interface{}` that cannot be indexed, sliced or ranged over directly.
+fn named_type(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Unknown(_) | Type::Null | Type::Union(_) | Type::Generic(_) | Type::Never => None,
+        ty => {
+            let rendered = go_type(ty);
+            (!rendered.is_empty() && rendered != "interface{}").then_some(rendered)
+        }
+    }
+}
+
+/// Whether a value is a mapping or a set, so `remove` is a `delete`.
+///
+/// Decided from the inferred type rather than from the method name: Python's
+/// `remove` is a `delete` on a set or dict and a slice rebuild on a list, and
+/// the two are not interchangeable in Go.
+fn is_mapping_like(expr: &Expr) -> bool {
+    matches!(
+        expr.ty,
+        Type::Map(_) | Type::OrderedMap { .. } | Type::Set(_)
+    )
+}
+
+/// The integer a bound literal stands for, including a unary minus.
+fn literal_bound(expr: &Expr) -> Option<i64> {
+    match &expr.kind {
+        ExprKind::Literal(Literal::Int(text)) => text.parse().ok(),
+        ExprKind::Unary {
+            op: UnaryOp::Neg,
+            operand,
+        } => literal_bound(operand).map(|bound| -bound),
+        _ => None,
+    }
+}
+
+/// Whether an expression can be rendered twice without changing anything.
+///
+/// A translation that needs a value in two places — a length for a shifted
+/// index, a default for an omitted slice bound — may only do it for a value
+/// whose second evaluation is the same as its first.
+fn is_repeatable(expr: &Expr) -> bool {
+    matches!(
+        expr.kind,
+        ExprKind::Path(_)
+            | ExprKind::Literal(_)
+            | ExprKind::Index { .. }
+            | ExprKind::Field { .. }
+            | ExprKind::Slice { .. }
+    )
+}
+
+/// `depth` tabs, for indenting a line that continues a statement.
+fn indent(depth: usize) -> String {
+    "\t".repeat(depth)
+}
 
 fn pattern_name(pattern: &Pattern) -> String {
     pattern
@@ -1107,6 +2864,20 @@ fn go_string(text: &str) -> String {
     out
 }
 
+/// The digits of a decimal integer literal, if `text` is one.
+///
+/// Bases other than ten are skipped: their width is visible in the digits, and
+/// Python's arbitrary precision does not make `0xFFFFFFFFFFFFFFFFF` a value a
+/// 64-bit target holds either, but reporting it is the frontends job because it
+/// is a source-level fact rather than a target-width one.
+fn plain_decimal(text: &str) -> Option<&str> {
+    let digits = text.strip_prefix(['-', '+']).unwrap_or(text);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(digits)
+}
+
 fn binary_symbol(op: BinaryOp) -> Option<&'static str> {
     Some(match op {
         BinaryOp::Add => "+",
@@ -1151,32 +2922,68 @@ fn comparison_symbol(op: ComparisonOp) -> Option<&'static str> {
     })
 }
 
+/// The Go type a comprehension produces for one element.
+///
+/// The inferred type wins because it knows about a value the source computed;
+/// literals are the fallback for a program that never gave the element a type,
+/// and anything else stays `interface{}`.
+fn element_go_type(expr: &Expr) -> String {
+    named_type(&expr.ty).unwrap_or_else(|| literal_element_type(expr))
+}
+
 /// The Go element type for a sequence literal, inferred from its elements.
 ///
 /// A homogeneous literal gets a concrete slice type; anything mixed or
 /// non-literal gets `interface{}`. This is inference over literals only, not a
 /// guess about a value the source left untyped.
 fn sequence_element_type(elements: &[Expr]) -> String {
-    let mut kind: Option<&'static str> = None;
+    let mut kind: Option<String> = None;
     for element in elements {
         let this = literal_element_type(element);
-        match kind {
+        match &kind {
             None => kind = Some(this),
-            Some(existing) if existing == this => {}
+            Some(existing) if *existing == this => {}
             Some(_) => return "interface{}".to_string(),
         }
     }
-    kind.unwrap_or("interface{}").to_string()
+    kind.unwrap_or_else(|| "interface{}".to_string())
 }
 
-fn literal_element_type(expr: &Expr) -> &'static str {
+/// The Go type one element of a literal sequence has.
+///
+/// A nested sequence is a sequence itself, so a list of lists keeps its shape
+/// as `[][]int` rather than collapsing to `[]interface{}` — the type a clause
+/// that ranges over it is inferred from has to be the type it was emitted with,
+/// or the loop binds an `interface{}` the next expression cannot walk.
+fn literal_element_type(expr: &Expr) -> String {
     match &expr.kind {
-        ExprKind::Literal(Literal::Int(_)) => "int",
-        ExprKind::Literal(Literal::Float(_)) => "float64",
-        ExprKind::Literal(Literal::Str(_)) => "string",
-        ExprKind::Literal(Literal::Bytes(_)) => "[]byte",
-        ExprKind::Literal(Literal::Bool(_)) => "bool",
-        _ => "interface{}",
+        ExprKind::Literal(Literal::Int(_)) => "int".to_string(),
+        ExprKind::Literal(Literal::Float(_)) => "float64".to_string(),
+        ExprKind::Literal(Literal::Str(_)) => "string".to_string(),
+        ExprKind::Literal(Literal::Bytes(_)) => "[]byte".to_string(),
+        ExprKind::Literal(Literal::Bool(_)) => "bool".to_string(),
+        ExprKind::List { elements } | ExprKind::Tuple { elements } => {
+            format!("[]{}", sequence_element_type(elements))
+        }
+        ExprKind::Set { elements } => {
+            format!("map[{}]struct{{}}", sequence_element_type(elements))
+        }
+        ExprKind::Map { entries } => {
+            // The IR's mappings are string-keyed, so only the value side has
+            // more than one type to reconcile.
+            let values: Vec<Expr> = entries.iter().map(|entry| entry.value.clone()).collect();
+            let key = named_type(&expr.ty)
+                .map(|ty| {
+                    ty.trim_start_matches("map[")
+                        .split(']')
+                        .next()
+                        .unwrap_or("string")
+                        .to_string()
+                })
+                .unwrap_or_else(|| "string".to_string());
+            format!("map[{key}]{}", sequence_element_type(&values))
+        }
+        _ => named_type(&expr.ty).unwrap_or_else(|| "interface{}".to_string()),
     }
 }
 
