@@ -1058,37 +1058,61 @@ impl<'a> Lowerer<'a> {
     /// An `elif` is an `if` in the `else` position, so it lowers recursively and
     /// comes out as [`Else::If`]. Flattening it into a plain block would make a
     /// backend emit `} else { if ... }`, which is Go defect class 1.
+    ///
+    /// The grammar keeps every `elif` as its own clause beside the `if`, and the
+    /// trailing `else` as one more clause after them. Reading only the `else`
+    /// clause therefore answers with the last branch of the chain and drops
+    /// every condition before it — a program that runs and does something else.
     fn else_branch(&mut self, node: tree_sitter::Node<'_>) -> Option<Else> {
+        let mut clauses: Vec<tree_sitter::Node<'_>> = Vec::new();
         let mut cursor = node.walk();
-        if !cursor.goto_first_child() {
-            return None;
-        }
-        loop {
-            let child = cursor.node();
-            if child.kind() == "else_clause" {
-                let inner = child.named_child(0)?;
-                return match inner.kind() {
-                    "block" => Some(Else::Block(self.block(Some(inner)))),
-                    "if_statement" => {
-                        let span = self.span(inner);
-                        let mut statements = self.if_statement(inner, span);
-                        // An `elif` is one statement. Anything else would be a
-                        // hoisted binding, which `ExprKind::Let` makes
-                        // impossible here.
-                        Some(Else::If(Box::new(
-                            statements.pop().expect("an `if` always lowers"),
-                        )))
-                    }
-                    other => {
-                        self.unsupported(inner, other);
-                        None
-                    }
-                };
-            }
-            if !cursor.goto_next_sibling() {
-                return None;
+        for child in node.named_children(&mut cursor) {
+            if matches!(child.kind(), "elif_clause" | "else_clause") {
+                clauses.push(child);
             }
         }
+        let mut branch: Option<Else> = None;
+        // The chain is nested from the back: the trailing `else` is the
+        // innermost, and each `elif` wraps what follows it.
+        for clause in clauses.into_iter().rev() {
+            let else_branch = branch.map(Box::new);
+            branch = match clause.kind() {
+                "else_clause" => {
+                    let body = clause.child_by_field_name("body");
+                    Some(Else::Block(self.block(body)))
+                }
+                _ => Some(Else::If(Box::new(self.elif_if(clause, else_branch)))),
+            };
+        }
+        branch
+    }
+
+    /// Lowers one `elif` clause to the `if` statement that carries it.
+    fn elif_if(&mut self, clause: tree_sitter::Node<'_>, else_branch: Option<Box<Else>>) -> Stmt {
+        let span = self.span(clause);
+        let (mut statements, condition) = match clause.child_by_field_name("condition") {
+            Some(n) => peel_lets(self.condition(n)),
+            None => (Vec::new(), Expr::error("`elif` with no condition", span)),
+        };
+        let then_branch = self.block(clause.child_by_field_name("consequence"));
+        statements.push(Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            span,
+        });
+        // An `elif` sits in an else position, where a preceding statement
+        // cannot be emitted: the binding a walrus in its condition makes would
+        // have to be written before the chain reached this branch. Reporting it
+        // is the only honest answer, since dropping the binding would silently
+        // change what the condition reads.
+        if statements.len() > 1 {
+            self.builder.report(
+                Diagnostic::error(span, "a walrus in an `elif` condition has no place to bind")
+                    .with_code("gset-python-elif-walrus"),
+            );
+        }
+        statements.pop().expect("an `elif` always lowers")
     }
 
     /// Lowers a `while`, hoisting any binding its condition makes.

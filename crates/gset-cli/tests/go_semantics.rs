@@ -204,6 +204,91 @@ print(maybe or \"default\")
 print(maybe if maybe else \"none\")
 ",
         },
+        Case {
+            name: "every_branch_of_an_elif_chain_runs",
+            source: "\
+def label(n):
+    if n > 10:
+        return \"big\"
+    elif n > 5:
+        return \"medium\"
+    elif n > 0:
+        return \"small\"
+    else:
+        return \"non-positive\"
+
+for n in [11, 7, 2, 0]:
+    print(label(n))
+",
+        },
+        Case {
+            name: "reaching_the_end_returns_none",
+            source: "\
+def maybe(n):
+    if n:
+        return n
+
+print(maybe(5) is None)
+print(maybe(0) is None)
+print(maybe(5))
+print(maybe(0))
+",
+        },
+        Case {
+            name: "ints_and_floats_mix_like_python",
+            source: "\
+count = 3
+ratio = 1.5
+print(count + ratio)
+print(count * ratio)
+print(ratio - count)
+print(count < ratio)
+print(ratio < count)
+print(count == 3)
+print(count == 3.0)
+print(count != 3.5)
+print(3 / 2)
+print(7 / 2)
+print(count / 2)
+print(-7 / 2)
+",
+        },
+        Case {
+            name: "containers_compare_by_value",
+            source: "\
+xs = [1, 2]
+ys = [1, 2]
+zs = [2, 1]
+print(xs == ys)
+print(xs == zs)
+print(xs != zs)
+a = {\"k\": [1, 2]}
+b = {\"k\": [1, 2]}
+print(a == b)
+c = {\"k\": [1, 3]}
+print(a == c)
+",
+        },
+        Case {
+            name: "untyped_parameters_compare_at_runtime",
+            source: "\
+def larger(a, b):
+    if a > b:
+        return a
+    return b
+
+print(larger(3, 7))
+print(larger(\"a\", \"b\"))
+print(larger(2.5, 1))
+
+def same(a, b):
+    return a == b
+
+print(same(1, 1.0))
+print(same([1], [1]))
+print(same(\"x\", \"x\"))
+",
+        },
     ]
 }
 

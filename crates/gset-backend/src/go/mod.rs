@@ -362,7 +362,7 @@ impl<'a> Emitter<'a> {
         let params = self.emit_params(function);
         let returns_value = function_returns_value(function);
         let ret = function_return_type(function, returns_value);
-        let signature = match ret {
+        let signature = match &ret {
             Some(ret) => format!("func {}{params} {ret} {{", function.name),
             None => format!("func {}{params} {{", function.name),
         };
@@ -376,6 +376,13 @@ impl<'a> Emitter<'a> {
         self.out.indent();
         self.bind_params(function);
         self.emit_block_body(&function.body);
+        // Python reaches the end of a function by returning `None`, and Go
+        // rejects a function whose result is missing on some path. The zero
+        // value stands for the `None`, which is the only answer Go can give and
+        // the one a caller comparing against `nil` expects.
+        if let Some(ret) = ret.as_ref().filter(|_| !always_returns(&function.body)) {
+            self.out.writeln(&format!("return {}", zero_value(ret)));
+        }
         self.out.dedent();
         self.out.writeln("}");
 
@@ -1807,7 +1814,15 @@ impl<'a> Emitter<'a> {
                 return format!("{helper}({lhs}, {rhs})");
             }
             BinaryOp::Pow => return self.emit_power(span, lhs, rhs),
+            BinaryOp::Div => return self.emit_true_division(span, lhs, rhs),
             _ => {}
+        }
+        if let Some((promote_left, promote_right)) = numeric_promotion(lhs, rhs) {
+            let lhs = self.emit_operand(lhs, promote_left);
+            let rhs = self.emit_operand(rhs, promote_right);
+            if let Some(symbol) = binary_symbol(op) {
+                return format!("({lhs} {symbol} {rhs})");
+            }
         }
         let lhs = self.emit_expr(lhs);
         let rhs = self.emit_expr(rhs);
@@ -1818,6 +1833,35 @@ impl<'a> Emitter<'a> {
                 format!("({lhs} /* unsupported */ {rhs})")
             }
         }
+    }
+
+    /// Emits `/`, which is Python's true division and not Go's integer one.
+    ///
+    /// `3 / 2` is `1.5` in Python and `1` in Go, so an integral operand is
+    /// promoted rather than emitted as-is: silently truncating is the one
+    /// answer a transpiler must never give.
+    fn emit_true_division(&mut self, span: Span, lhs: &Expr, rhs: &Expr) -> String {
+        if numeric_rank(&lhs.ty).is_some() && numeric_rank(&rhs.ty).is_some() {
+            let promoted_left = numeric_rank(&lhs.ty) == Some(1);
+            let promoted_right = numeric_rank(&rhs.ty) == Some(1);
+            let left = self.emit_operand(lhs, promoted_left);
+            let right = self.emit_operand(rhs, promoted_right);
+            return format!("({left} / {right})");
+        }
+        if concrete_type(lhs).is_some() && concrete_type(rhs).is_some() {
+            unsupported(
+                self.diagnostics,
+                span,
+                "a division of two non-numeric values",
+            );
+            let left = self.emit_expr(lhs);
+            let right = self.emit_expr(rhs);
+            return format!("({left} / {right})");
+        }
+        let helper = self.use_helper("gsetDivide");
+        let left = self.emit_expr(lhs);
+        let right = self.emit_expr(rhs);
+        format!("{helper}({left}, {right})")
     }
 
     /// Emits `a ** b`.
@@ -1881,6 +1925,29 @@ impl<'a> Emitter<'a> {
             }
             _ => {}
         }
+        // `is` asks whether two names hold the same object, which is a question
+        // about identity rather than value: `x is None` is the only spelling
+        // Go can answer, and the rest stays a reported gap rather than a
+        // `==` that would compare values and quietly disagree.
+        if matches!(op, ComparisonOp::Is | ComparisonOp::IsNot)
+            && !matches!(rhs.kind, ExprKind::Literal(Literal::Null))
+        {
+            unsupported(
+                self.diagnostics,
+                span,
+                "`is` between two values that are not None",
+            );
+            let symbol = if op == ComparisonOp::Is { "==" } else { "!=" };
+            let lhs = self.emit_expr(lhs);
+            let rhs = self.emit_expr(rhs);
+            return format!("({lhs} {symbol} {rhs})");
+        }
+        if let Some(equality) = self.emit_equality(op, lhs, rhs) {
+            return equality;
+        }
+        if let Some(ordering) = self.emit_ordering(op, lhs, rhs) {
+            return ordering;
+        }
         let lhs = self.emit_expr(lhs);
         let rhs = self.emit_expr(rhs);
         match comparison_symbol(op) {
@@ -1889,6 +1956,78 @@ impl<'a> Emitter<'a> {
                 unsupported(self.diagnostics, span, "this comparison");
                 format!("({lhs} /* unsupported */ {rhs})")
             }
+        }
+    }
+
+    /// Emits `==` and `!=` when Go's own operator does not answer Python's
+    /// question.
+    ///
+    /// Go compares an interface holding a slice by panicking, and an `int`
+    /// against a `float64` as unequal, where Python compares containers by
+    /// value and 1 to 1.0 as equal. Both answers only exist at runtime, so a
+    /// comparison with an operand the source never typed asks a helper.
+    fn emit_equality(&mut self, op: ComparisonOp, lhs: &Expr, rhs: &Expr) -> Option<String> {
+        if !matches!(
+            op,
+            ComparisonOp::Eq | ComparisonOp::Ne | ComparisonOp::Is | ComparisonOp::IsNot
+        ) {
+            return None;
+        }
+        if let Some((promote_left, promote_right)) = numeric_promotion(lhs, rhs) {
+            let left = self.emit_operand(lhs, promote_left);
+            let right = self.emit_operand(rhs, promote_right);
+            let symbol = comparison_symbol(op)?;
+            return Some(format!("({left} {symbol} {right})"));
+        }
+        if !needs_value_equality(lhs) && !needs_value_equality(rhs) {
+            return None;
+        }
+        let helper = self.use_helper("gsetEqual");
+        let left = self.emit_expr(lhs);
+        let right = self.emit_expr(rhs);
+        let call = format!("{helper}({left}, {right})");
+        Some(if matches!(op, ComparisonOp::Eq | ComparisonOp::Is) {
+            call
+        } else {
+            format!("!{call}")
+        })
+    }
+
+    /// Emits `<`, `<=`, `>` and `>=` when the operands do not share a Go type.
+    ///
+    /// Python orders across its numeric tower and Go has no operator between
+    /// `int` and `float64`, so either the promotion is written out or, when an
+    /// operand's type is unknown, the ordering is decided at runtime.
+    fn emit_ordering(&mut self, op: ComparisonOp, lhs: &Expr, rhs: &Expr) -> Option<String> {
+        let symbol = comparison_symbol(op)?;
+        if !matches!(
+            op,
+            ComparisonOp::Lt | ComparisonOp::Le | ComparisonOp::Gt | ComparisonOp::Ge
+        ) {
+            return None;
+        }
+        if let Some((promote_left, promote_right)) = numeric_promotion(lhs, rhs) {
+            let left = self.emit_operand(lhs, promote_left);
+            let right = self.emit_operand(rhs, promote_right);
+            return Some(format!("({left} {symbol} {right})"));
+        }
+        if concrete_type(lhs).is_some() && concrete_type(rhs).is_some() {
+            return None;
+        }
+        let helper = self.use_helper("gsetCompare");
+        let left = self.emit_expr(lhs);
+        let right = self.emit_expr(rhs);
+        Some(format!("{helper}({left}, {right}) {symbol} 0"))
+    }
+
+    /// Emits an operand, promoting it to `float64` when Python's numeric tower
+    /// requires it and Go's types do not allow it.
+    fn emit_operand(&mut self, expr: &Expr, promote: bool) -> String {
+        let value = self.emit_expr(expr);
+        if promote {
+            format!("float64({value})")
+        } else {
+            value
         }
     }
 
@@ -2561,29 +2700,144 @@ fn helpers() -> &'static [Helper] {
             name: "gsetLess",
             signature: "func gsetLess(left, right interface{}) bool",
             imports: &[],
-            deps: &[],
+            deps: &["gsetCompare"],
             body: &[
                 "// Python sorts values of one type, and the source's element type is",
                 "// not in the program text, so the comparison is decided by the",
                 "// dynamic type and an incomparable pair keeps its input order.",
-                "switch first := left.(type) {",
-                "case int:",
-                "\tsecond, ok := right.(int)",
-                "\treturn ok && first < second",
-                "case int64:",
-                "\tsecond, ok := right.(int64)",
-                "\treturn ok && first < second",
-                "case float64:",
-                "\tsecond, ok := right.(float64)",
-                "\treturn ok && first < second",
-                "case string:",
-                "\tsecond, ok := right.(string)",
-                "\treturn ok && first < second",
-                "case bool:",
-                "\tsecond, ok := right.(bool)",
-                "\treturn !ok && !first && second",
+                "return gsetCompare(left, right) < 0",
+            ],
+        },
+        Helper {
+            name: "gsetCompare",
+            signature: "func gsetCompare(left, right interface{}) int",
+            imports: &["fmt", "strings"],
+            deps: &["gsetNumber"],
+            body: &[
+                "// Python compares by value across its numeric tower, so an int and",
+                "// a float order against each other rather than failing. Go has no",
+                "// operator between `int` and `float64` at all, so the promotion",
+                "// has to happen here.",
+                "if leftNumber, leftOk := gsetNumber(left); leftOk {",
+                "\tif rightNumber, rightOk := gsetNumber(right); rightOk {",
+                "\t\tif leftNumber < rightNumber {",
+                "\t\t\treturn -1",
+                "\t\t}",
+                "\t\tif leftNumber > rightNumber {",
+                "\t\t\treturn 1",
+                "\t\t}",
+                "\t\treturn 0",
+                "\t}",
                 "}",
-                "return false",
+                "if leftText, ok := left.(string); ok {",
+                "\tif rightText, ok := right.(string); ok {",
+                "\t\treturn strings.Compare(leftText, rightText)",
+                "\t}",
+                "}",
+                "// A pair of values Python cannot order is a `TypeError` there, and",
+                "// a sort that quietly kept the input order would report success",
+                "// for a program that cannot run.",
+                "panic(fmt.Sprintf(\"gset: '%T' and '%T' cannot be ordered\", left, right))",
+            ],
+        },
+        Helper {
+            name: "gsetEqual",
+            signature: "func gsetEqual(left, right interface{}) bool",
+            imports: &["reflect"],
+            deps: &["gsetNumber"],
+            body: &[
+                "// Python's `==` compares containers by value and numbers across the",
+                "// tower, where Go compares an interface holding a slice by panic",
+                "// and an int against a float64 as unequal.",
+                "if leftNumber, ok := gsetNumber(left); ok {",
+                "\tif rightNumber, ok := gsetNumber(right); ok {",
+                "\t\treturn leftNumber == rightNumber",
+                "\t}",
+                "}",
+                "if leftText, ok := left.(string); ok {",
+                "\tif rightText, ok := right.(string); ok {",
+                "\t\treturn leftText == rightText",
+                "\t}",
+                "\treturn false",
+                "}",
+                "if left == nil || right == nil {",
+                "\treturn left == right",
+                "}",
+                "leftValue := reflect.ValueOf(left)",
+                "rightValue := reflect.ValueOf(right)",
+                "if leftValue.Type() != rightValue.Type() {",
+                "\treturn false",
+                "}",
+                "switch leftValue.Kind() {",
+                "case reflect.Slice, reflect.Array:",
+                "\tif leftValue.Kind() == reflect.Slice && leftValue.IsNil() || rightValue.Kind() == reflect.Slice && rightValue.IsNil() {",
+                "\t\treturn leftValue.IsNil() && rightValue.IsNil()",
+                "\t}",
+                "\treturn reflect.DeepEqual(left, right)",
+                "case reflect.Map:",
+                "\tif leftValue.IsNil() || rightValue.IsNil() {",
+                "\t\treturn leftValue.IsNil() && rightValue.IsNil()",
+                "\t}",
+                "\treturn reflect.DeepEqual(left, right)",
+                "}",
+                "return left == right",
+            ],
+        },
+        Helper {
+            name: "gsetDivide",
+            signature: "func gsetDivide(left, right interface{}) interface{}",
+            imports: &["fmt"],
+            deps: &["gsetNumber"],
+            body: &[
+                "// Python's `/` is true division: `3 / 2` is `1.5`, where Go's own",
+                "// division truncates. An operand the source never typed can only be",
+                "// classified at runtime.",
+                "leftNumber, leftOk := gsetNumber(left)",
+                "rightNumber, rightOk := gsetNumber(right)",
+                "if !leftOk || !rightOk {",
+                "\tpanic(fmt.Sprintf(\"gset: a division of '%T' and '%T'\", left, right))",
+                "}",
+                "if rightNumber == 0 {",
+                "\tpanic(\"gset: division by zero\")",
+                "}",
+                "return leftNumber / rightNumber",
+            ],
+        },
+        Helper {
+            name: "gsetNumber",
+            signature: "func gsetNumber(value interface{}) (float64, bool)",
+            imports: &[],
+            deps: &[],
+            body: &[
+                "// A `bool` is an `int` in Python's numeric tower and a distinct",
+                "// type in Go, so `True + 1` has to come from the same place.",
+                "switch typed := value.(type) {",
+                "case int:",
+                "\treturn float64(typed), true",
+                "case int8:",
+                "\treturn float64(typed), true",
+                "case int16:",
+                "\treturn float64(typed), true",
+                "case int32:",
+                "\treturn float64(typed), true",
+                "case int64:",
+                "\treturn float64(typed), true",
+                "case uint:",
+                "\treturn float64(typed), true",
+                "case uint8:",
+                "\treturn float64(typed), true",
+                "case uint16:",
+                "\treturn float64(typed), true",
+                "case uint32:",
+                "\treturn float64(typed), true",
+                "case uint64:",
+                "\treturn float64(typed), true",
+                "case float32:",
+                "\treturn float64(typed), true",
+                "case float64:",
+                "\treturn typed, true",
+                "}",
+                "return 0, false",
             ],
         },
         Helper {
@@ -2705,6 +2959,46 @@ fn helpers() -> &'static [Helper] {
 /// it is the guess this backend refuses to make.
 fn concrete_type(expr: &Expr) -> Option<String> {
     named_type(&expr.ty)
+}
+
+/// Whether Python's `==` on this value is a question only the runtime can answer.
+///
+/// Go compares an interface holding a slice or a map by panicking, and tells an
+/// `int` and a `float64` apart where Python calls 1 and 1.0 equal, so a value
+/// the source never typed — or one Go cannot compare by value — needs a helper.
+fn needs_value_equality(expr: &Expr) -> bool {
+    concrete_type(expr).is_none()
+        || matches!(
+            expr.ty,
+            Type::List { .. }
+                | Type::Tuple(_)
+                | Type::Map(_)
+                | Type::OrderedMap { .. }
+                | Type::Set(_)
+                | Type::Bytes
+        )
+}
+
+/// Which operand of a numeric expression has to be promoted to a float.
+///
+/// Python adds an `int` to a `float` and orders the two; Go rejects the
+/// expression outright. The promotion is written out here because both operand
+/// types are already known, and `float64` is a conversion rather than a call.
+fn numeric_promotion(lhs: &Expr, rhs: &Expr) -> Option<(bool, bool)> {
+    match (numeric_rank(&lhs.ty), numeric_rank(&rhs.ty)) {
+        (Some(1), Some(2)) => Some((true, false)),
+        (Some(2), Some(1)) => Some((false, true)),
+        _ => None,
+    }
+}
+
+/// The two numeric families Go keeps apart: integral and floating point.
+fn numeric_rank(ty: &Type) -> Option<u8> {
+    match ty {
+        Type::Int(_) | Type::Char => Some(1),
+        Type::Float => Some(2),
+        _ => None,
+    }
 }
 
 /// The Go type of `ty`, unless the source left it dynamic.
@@ -3122,6 +3416,48 @@ fn function_return_type(function: &Function, returns_value: bool) -> Option<Stri
         // function with no value returns is void in Go.
         None if returns_value => Some("interface{}".to_string()),
         None => None,
+    }
+}
+
+/// Whether control cannot reach the end of a block without leaving the function.
+///
+/// Only an unconditional exit counts. A loop can run zero times and a `break`
+/// leaves it early, so neither proves anything, and an `if` proves it only when
+/// both arms do: Python falls off the end of an `if` whose other arm returns.
+fn always_returns(block: &Block) -> bool {
+    block.statements.iter().any(|statement| match statement {
+        Stmt::Return { .. } | Stmt::Throw { .. } => true,
+        Stmt::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => always_returns(then_branch) && else_returns(else_branch),
+        Stmt::Block(inner) => always_returns(inner),
+        _ => false,
+    })
+}
+
+/// Whether every branch of an `else` leaves the function.
+fn else_returns(else_branch: &Else) -> bool {
+    match else_branch {
+        Else::Block(block) => always_returns(block),
+        Else::If(nested) => matches!(nested.as_ref(), Stmt::If { then_branch, else_branch, .. }
+            if always_returns(then_branch) && else_branch.as_deref().is_some_and(else_returns)),
+    }
+}
+
+/// The value a Go function returns for a Python `None` that fell off the end.
+///
+/// Go has no `None`, so a function that can end without returning needs its
+/// type's zero value: `nil` for the reference types and the dynamic `interface{}`
+/// a caller compares against `nil`, and the literal zero for the rest.
+fn zero_value(go_type_name: &str) -> &'static str {
+    match go_type_name {
+        "bool" => "false",
+        "string" => "\"\"",
+        "int" | "int8" | "int16" | "int32" | "int64" | "uint" | "uint8" | "uint16" | "uint32"
+        | "uint64" | "byte" | "rune" | "float32" | "float64" => "0",
+        _ => "nil",
     }
 }
 

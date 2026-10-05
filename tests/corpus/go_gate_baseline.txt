@@ -16,10 +16,10 @@ backend    lambdas
 backend    literals
 invalid    loops
 invalid    module_shape
-invalid    null_handling
+ok         null_handling
 backend    numeric_literals
 frontend   operators
-invalid    returns
+ok         returns
 invalid    typed
 
-1 ok / 1 frontend / 13 backend / 0 malformed / 8 invalid
+3 ok / 1 frontend / 13 backend / 0 malformed / 6 invalid
