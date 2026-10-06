@@ -3,7 +3,7 @@ backend    async_flow
 backend    classes
 backend    comprehensions
 backend    context_managers
-invalid    declaration_after_if
+ok         declaration_after_if
 backend    declarations
 backend    decorators
 backend    destructuring
@@ -20,6 +20,6 @@ ok         null_handling
 backend    numeric_literals
 frontend   operators
 ok         returns
-invalid    typed
+ok         typed
 
-3 ok / 1 frontend / 16 backend / 0 malformed / 3 invalid
+5 ok / 1 frontend / 16 backend / 0 malformed / 1 invalid

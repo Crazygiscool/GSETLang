@@ -152,6 +152,28 @@ struct Emitter<'a> {
     globals: HashSet<String>,
     /// Names declared in the current function scope.
     locals: HashSet<String>,
+    /// The names this emitter declared as `interface{}` even though inference
+    /// gave them a type.
+    ///
+    /// Everything downstream asks what Go type an expression will have, and
+    /// for one of these names the answer is `interface{}` however confident the
+    /// inference was about the single assignment it saw.
+    dynamic_locals: HashSet<String>,
+    /// The Go types each name is bound to somewhere in the current function.
+    ///
+    /// A Python name is a reference to whatever object was last assigned to it,
+    /// so a name the function binds to an `int` and later to an arithmetic
+    /// result of unknown type is one value that can be either. Go's `:=` fixes
+    /// a variable's type at its first assignment, so those names are declared
+    /// `interface{}` and every assignment lands in them unchanged.
+    bind_types: HashMap<String, BTreeSet<String>>,
+    /// Every name the current function reads.
+    ///
+    /// Go rejects a local that is declared and never used, while Python has no
+    /// such rule: `if items: found = items[0]` binds a name the program never
+    /// mentions again. The emitter has to know which names that applies to
+    /// before it can emit the declaration Go will accept.
+    reads: HashSet<String>,
     /// The declared type of each annotated parameter of the current function.
     ///
     /// Python states a parameter's type in the source, so a use of that
@@ -210,6 +232,9 @@ impl<'a> Emitter<'a> {
             main_statements: Vec::new(),
             globals: HashSet::new(),
             locals: HashSet::new(),
+            dynamic_locals: HashSet::new(),
+            bind_types: HashMap::new(),
+            reads: HashSet::new(),
             param_types: HashMap::new(),
             returns_value: false,
             loop_else_flags: Vec::new(),
@@ -517,12 +542,19 @@ impl<'a> Emitter<'a> {
         self.out.blank();
 
         let outer_locals = std::mem::take(&mut self.locals);
+        let outer_dynamic_locals = std::mem::take(&mut self.dynamic_locals);
+        let outer_bind_types = std::mem::take(&mut self.bind_types);
+        let outer_reads = std::mem::take(&mut self.reads);
         let outer_param_types = std::mem::take(&mut self.param_types);
         let outer_returns = self.returns_value;
         self.returns_value = returns_value;
 
         self.out.writeln(&signature);
         self.out.indent();
+        for statement in &function.body.statements {
+            collect_reads_statement(statement, &mut self.reads);
+            collect_bind_types_statement(statement, &mut self.bind_types);
+        }
         self.bind_params(function);
         self.emit_block_body(&function.body);
         // Python reaches the end of a function by returning `None`, and Go
@@ -536,6 +568,9 @@ impl<'a> Emitter<'a> {
         self.out.writeln("}");
 
         self.locals = outer_locals;
+        self.dynamic_locals = outer_dynamic_locals;
+        self.bind_types = outer_bind_types;
+        self.reads = outer_reads;
         self.param_types = outer_param_types;
         self.returns_value = outer_returns;
     }
@@ -696,10 +731,16 @@ impl<'a> Emitter<'a> {
                 let name = pattern_name(&decl.pattern);
                 self.locals.insert(name.clone());
                 let ty = go_type(ty);
+                if self.bind_types_have_more_than_one(&name) {
+                    self.declare_dynamic(&name, value);
+                    self.discard_unused(&name);
+                    return;
+                }
                 match value {
                     Some(value) => self.out.writeln(&format!("var {name} {ty} = {value}")),
                     None => self.out.writeln(&format!("var {name} {ty}")),
                 }
+                self.discard_unused(&name);
             }
             (PatternKind::Bind, None) => {
                 let name = pattern_name(&decl.pattern);
@@ -712,7 +753,14 @@ impl<'a> Emitter<'a> {
                     Some(value) if declared => {
                         self.out.writeln(&format!("{name} = {value}"));
                     }
-                    Some(value) => self.out.writeln(&format!("{name} := {value}")),
+                    Some(value) if self.bind_types_have_more_than_one(&name) => {
+                        self.declare_dynamic(&name, Some(value));
+                        self.discard_unused(&name);
+                    }
+                    Some(value) => {
+                        self.out.writeln(&format!("{name} := {value}"));
+                        self.discard_unused(&name);
+                    }
                 }
             }
             (PatternKind::Ignore, _) => {
@@ -721,6 +769,55 @@ impl<'a> Emitter<'a> {
                 }
             }
             _ => unsupported(self.diagnostics, decl.span, "a destructuring declaration"),
+        }
+    }
+
+    /// Declares a local whose Go type is `interface{}`, whether or not it has a
+    /// value yet.
+    fn declare_dynamic(&mut self, name: &str, value: Option<String>) {
+        self.dynamic_locals.insert(name.to_string());
+        match value {
+            Some(value) => self
+                .out
+                .writeln(&format!("var {name} interface{{}} = {value}")),
+            None => self.out.writeln(&format!("var {name} interface{{}}")),
+        }
+    }
+
+    /// The Go type this emitter will write for `expr`.
+    ///
+    /// This is the expression's inferred type unless the name it refers to was
+    /// declared `interface{}` here, which happens when the function binds that
+    /// name to values of more than one Go type. Asking the wrong one produces a
+    /// file Go rejects: `interface{} > 2` is not an operator, and no `int` and
+    /// no `float64` are what the variable holds.
+    fn go_type_of(&self, expr: &Expr) -> Option<String> {
+        if let ExprKind::Path(path) = &expr.kind
+            && path.is_bare()
+            && let Some(name) = path.segments.first()
+            && self.dynamic_locals.contains(name.as_ref())
+        {
+            return None;
+        }
+        concrete_type(expr)
+    }
+
+    /// Whether `name` is bound to values of more than one Go type in this
+    /// function.
+    fn bind_types_have_more_than_one(&self, name: &str) -> bool {
+        self.bind_types
+            .get(name)
+            .is_some_and(|types| types.len() > 1)
+    }
+
+    /// Marks a just-declared local as used when nothing in the function reads
+    /// it.
+    ///
+    /// The assignment does nothing at runtime and is exactly what Go's own
+    /// tooling suggests for a binding the program does not otherwise need.
+    fn discard_unused(&mut self, name: &str) {
+        if !self.reads.contains(name) {
+            self.out.writeln(&format!("_ = {name}"));
         }
     }
 
@@ -733,8 +830,12 @@ impl<'a> Emitter<'a> {
                 let value = self.emit_expr(value);
                 if declared {
                     self.out.writeln(&format!("{name} = {value}"));
+                } else if self.bind_types_have_more_than_one(&name) {
+                    self.declare_dynamic(&name, Some(value));
+                    self.discard_unused(&name);
                 } else {
                     self.out.writeln(&format!("{name} := {value}"));
+                    self.discard_unused(&name);
                 }
             }
             PatternKind::Ignore => {
@@ -915,6 +1016,7 @@ impl<'a> Emitter<'a> {
     }
 
     fn emit_if(&mut self, condition: &Expr, then_branch: &Block, else_branch: Option<&Else>) {
+        self.hoist_branch_bindings(then_branch, else_branch);
         let condition = self.emit_condition(condition);
         self.out.writeln(&format!("if {condition} {{"));
         self.out.indent();
@@ -922,6 +1024,56 @@ impl<'a> Emitter<'a> {
         self.out.dedent();
         self.emit_else(else_branch);
         self.out.writeln("}");
+    }
+
+    /// Declares, ahead of an `if`, every name that all of its paths bind.
+    ///
+    /// Python binds a name when a branch assigns it, and the binding outlives
+    /// the branch: `if c: chosen = "fast" else: chosen = "slow"` leaves
+    /// `chosen` readable afterwards. Go's `:=` is scoped to the block it
+    /// appears in, so the same source leaves `chosen` undefined and the
+    /// program does not compile. Emitting the declaration here, and letting
+    /// the branches assign to it, is the form that has the same meaning.
+    ///
+    /// Only names every path binds are hoisted. A name some path leaves
+    /// unbound is read as a `NameError` in Python, and Go's zero value is not
+    /// one, so a declaration there would quietly answer a different question.
+    fn hoist_branch_bindings(&mut self, then_branch: &Block, else_branch: Option<&Else>) {
+        let Some(else_branch) = else_branch else {
+            return;
+        };
+        let then_bound = definitely_bound(&then_branch.statements);
+        let else_bound = match else_branch {
+            Else::Block(block) => definitely_bound(&block.statements),
+            Else::If(nested) => definitely_bound(std::slice::from_ref(nested.as_ref())),
+        };
+        let mut shared: Vec<String> = then_bound
+            .intersection(&else_bound)
+            .filter(|name| !self.locals.contains(*name))
+            .cloned()
+            .collect();
+        shared.sort();
+        if shared.is_empty() {
+            return;
+        }
+        let types = assignment_types(&then_branch.statements);
+        let else_types = match else_branch {
+            Else::Block(block) => assignment_types(&block.statements),
+            Else::If(nested) => assignment_types(std::slice::from_ref(nested.as_ref())),
+        };
+        for name in shared {
+            // The branches agree on the type in every program Python accepts;
+            // where they do not, the declared type has to be the one both
+            // assign to, so it is `interface{}` and each branch's value still
+            // lands in it unchanged.
+            let go = match (types.get(&name), else_types.get(&name)) {
+                (Some(left), Some(right)) if left == right => named_type(left),
+                _ => None,
+            };
+            let go = go.unwrap_or_else(|| "interface{}".to_string());
+            self.out.writeln(&format!("var {name} {go}"));
+            self.locals.insert(name);
+        }
     }
 
     fn emit_else(&mut self, else_branch: Option<&Else>) {
@@ -990,7 +1142,7 @@ impl<'a> Emitter<'a> {
         let mut pattern_names = Vec::new();
         pattern.collect_names(&mut pattern_names);
         let pairs = matches!(pattern.kind, PatternKind::Sequence) && pattern_names.len() == 2;
-        let dynamic = concrete_type(iterable).is_none();
+        let dynamic = self.go_type_of(iterable).is_none();
         let iterable_helper = dynamic.then(|| self.use_helper("gsetIter"));
         let mut iterable = self.emit_expr(iterable);
         if let Some(helper) = iterable_helper {
@@ -1253,7 +1405,7 @@ impl<'a> Emitter<'a> {
             } => self.emit_method_call(receiver, method, args, named_args, expr.span, &expr.ty),
             ExprKind::Index { target, index } => {
                 let target_text = self.emit_expr(target);
-                if concrete_type(target).is_none() {
+                if self.go_type_of(target).is_none() {
                     // An `interface{}` cannot be indexed in Go at all, and the
                     // index may be negative, which `reflect` resolves itself.
                     let helper = self.use_helper("gsetIndex");
@@ -1334,7 +1486,7 @@ impl<'a> Emitter<'a> {
                     // `len` of an `interface{}` has no Go built-in form.
                     if args
                         .first()
-                        .is_some_and(|argument| concrete_type(argument).is_none())
+                        .is_some_and(|argument| self.go_type_of(argument).is_none())
                     {
                         let helper = self.use_helper("gsetLen");
                         return format!("{helper}({})", rendered.join(", "));
@@ -1352,8 +1504,34 @@ impl<'a> Emitter<'a> {
                     self.imports.insert("fmt");
                     return format!("fmt.Sprint({})", rendered.join(", "));
                 }
-                "int" => return format!("int({})", rendered.join(", ")),
-                "float" => return format!("float64({})", rendered.join(", ")),
+                // A conversion whose operand type the source never stated is a
+                // runtime question: Python accepts an int where Go's
+                // `float64(...)` requires a float, and both `int` and `float`
+                // parse a string in Python.
+                "int" => {
+                    if args
+                        .first()
+                        .is_some_and(|argument| self.go_type_of(argument).is_none())
+                    {
+                        let helper = self.use_helper("gsetInt");
+                        return format!("{helper}({})", rendered.join(", "));
+                    }
+                    return format!("int({})", rendered.join(", "));
+                }
+                "float" => {
+                    if args
+                        .first()
+                        .is_some_and(|argument| self.go_type_of(argument).is_none())
+                    {
+                        let helper = self.use_helper("gsetFloat");
+                        return format!("{helper}({})", rendered.join(", "));
+                    }
+                    return format!("float64({})", rendered.join(", "));
+                }
+                "bool" => {
+                    let helper = self.use_helper("gsetTruthy");
+                    return format!("{helper}({})", rendered.join(", "));
+                }
                 "range" => {
                     // `range` only has meaning as a loop header, which
                     // `emit_for_in` handles. Reaching here means it was used as
@@ -1443,7 +1621,7 @@ impl<'a> Emitter<'a> {
         // Read before rendering: rendering borrows the emitter, and the
         // expansion of a mutating method needs the receiver's type to name the
         // slice or map it is assigning back to.
-        let receiver_type = concrete_type(receiver);
+        let receiver_type = self.go_type_of(receiver);
         let mapping_like = is_mapping_like(receiver);
         let receiver = self.emit_expr(receiver);
         // Read before rendering: an argument count decides which helper a method
@@ -1831,7 +2009,7 @@ impl<'a> Emitter<'a> {
             let helper = destructuring.then(|| self.use_helper("gsetPairs"));
             // A clause over a value with no Go type of its own cannot be ranged
             // over, so the elements are materialised first.
-            let dynamic = concrete_type(&clause.iterable).is_none();
+            let dynamic = self.go_type_of(&clause.iterable).is_none();
             let iterable_helper = dynamic.then(|| self.use_helper("gsetIter"));
             let mut iterable = self.emit_expr(&clause.iterable);
             if let Some(helper) = iterable_helper {
@@ -2074,6 +2252,29 @@ impl<'a> Emitter<'a> {
                 return format!("({lhs} {symbol} {rhs})");
             }
         }
+        // An operand the source never typed is an `interface{}` in Go, and Go
+        // has no operator over `interface{}`: the compiler rejects the
+        // expression outright. Python's arithmetic rules — which kinds of
+        // operand combine, and what the result's type is — are a runtime
+        // question here, so it goes to a helper that asks it.
+        if self.go_type_of(lhs).is_none() || self.go_type_of(rhs).is_none() {
+            if let Some(helper) = dynamic_arithmetic_helper(op) {
+                let helper = self.use_helper(helper);
+                let lhs = self.emit_expr(lhs);
+                let rhs = self.emit_expr(rhs);
+                return format!("{helper}({lhs}, {rhs})");
+            }
+            if let Some(symbol) = binary_symbol(op) {
+                let lhs = self.emit_expr(lhs);
+                let rhs = self.emit_expr(rhs);
+                unsupported(
+                    self.diagnostics,
+                    span,
+                    "this operator on a value whose type the source never stated",
+                );
+                return format!("({lhs} /* unsupported */ {symbol} {rhs})");
+            }
+        }
         let lhs = self.emit_expr(lhs);
         let rhs = self.emit_expr(rhs);
         match binary_symbol(op) {
@@ -2098,7 +2299,7 @@ impl<'a> Emitter<'a> {
             let right = self.emit_operand(rhs, promoted_right);
             return format!("({left} / {right})");
         }
-        if concrete_type(lhs).is_some() && concrete_type(rhs).is_some() {
+        if self.go_type_of(lhs).is_some() && self.go_type_of(rhs).is_some() {
             unsupported(
                 self.diagnostics,
                 span,
@@ -2261,7 +2462,7 @@ impl<'a> Emitter<'a> {
             let right = self.emit_operand(rhs, promote_right);
             return Some(format!("({left} {symbol} {right})"));
         }
-        if concrete_type(lhs).is_some() && concrete_type(rhs).is_some() {
+        if self.go_type_of(lhs).is_some() && self.go_type_of(rhs).is_some() {
             return None;
         }
         let helper = self.use_helper("gsetCompare");
@@ -2337,7 +2538,7 @@ impl<'a> Emitter<'a> {
         // A slice of a value the source never typed has no Go operand form at
         // all — `interface{}` cannot be sliced — so the bounds and the length
         // are resolved at runtime instead.
-        if concrete_type(target_expr).is_none() {
+        if self.go_type_of(target_expr).is_none() {
             let helper = self.use_helper("gsetSlice");
             let target = self.emit_expr(target_expr);
             let start = match start {
@@ -2592,6 +2793,302 @@ fn helpers() -> &'static [Helper] {
                 "\tresult *= base",
                 "}",
                 "return result",
+            ],
+        },
+        Helper {
+            name: "gsetConcat",
+            signature: "func gsetConcat(left, right interface{}) (interface{}, bool)",
+            imports: &["reflect"],
+            deps: &["gsetIsSlice"],
+            body: &[
+                "// Python concatenates two sequences of the same kind and nothing else: a",
+                "// string with a string, a list with a list. Go's `+` does both without",
+                "// checking that the two sides agree, so the check is made here, along with",
+                "// a copy that keeps each element's own type — a `[]int` stays a `[]int`",
+                "// until something reads it as a list of values.",
+                "if leftText, ok := left.(string); ok {",
+                "\trightText, rightOk := right.(string)",
+                "\treturn leftText + rightText, rightOk",
+                "}",
+                "leftValue := reflect.ValueOf(left)",
+                "rightValue := reflect.ValueOf(right)",
+                "if !gsetIsSlice(leftValue) || !gsetIsSlice(rightValue) {",
+                "\treturn nil, false",
+                "}",
+                "if leftValue.Type() != rightValue.Type() {",
+                "\treturn nil, false",
+                "}",
+                "combined := make([]interface{}, 0, leftValue.Len()+rightValue.Len())",
+                "for index := 0; index < leftValue.Len(); index++ {",
+                "\tcombined = append(combined, leftValue.Index(index).Interface())",
+                "}",
+                "for index := 0; index < rightValue.Len(); index++ {",
+                "\tcombined = append(combined, rightValue.Index(index).Interface())",
+                "}",
+                "return combined, true",
+            ],
+        },
+        Helper {
+            name: "gsetIsSlice",
+            signature: "func gsetIsSlice(value reflect.Value) bool",
+            imports: &[],
+            deps: &[],
+            body: &[
+                "if !value.IsValid() {",
+                "\treturn false",
+                "}",
+                "kind := value.Kind()",
+                "return kind == reflect.Slice || kind == reflect.Array",
+            ],
+        },
+        Helper {
+            name: "gsetRepeat",
+            signature: "func gsetRepeat(value interface{}, count int) (interface{}, bool)",
+            imports: &["reflect", "strings"],
+            deps: &["gsetIsSlice"],
+            body: &[
+                "// Python repeats a sequence by an integer count and defines nothing else,",
+                "// and a negative count is the empty sequence rather than an error.",
+                "if text, ok := value.(string); ok {",
+                "\tif count < 0 {",
+                "\t\treturn \"\", true",
+                "\t}",
+                "\tvar builder strings.Builder",
+                "\tfor i := 0; i < count; i++ {",
+                "\t\tbuilder.WriteString(text)",
+                "\t}",
+                "\treturn builder.String(), true",
+                "}",
+                "reflected := reflect.ValueOf(value)",
+                "if !gsetIsSlice(reflected) {",
+                "\treturn nil, false",
+                "}",
+                "if count < 0 {",
+                "\tcount = 0",
+                "}",
+                "repeated := make([]interface{}, 0, reflected.Len()*count)",
+                "for i := 0; i < count; i++ {",
+                "\tfor index := 0; index < reflected.Len(); index++ {",
+                "\t\trepeated = append(repeated, reflected.Index(index).Interface())",
+                "\t}",
+                "}",
+                "return repeated, true",
+            ],
+        },
+        Helper {
+            name: "gsetWhole",
+            signature: "func gsetWhole(value interface{}) (int, bool)",
+            imports: &["reflect"],
+            deps: &[],
+            body: &[
+                "// The value as a Go `int` when it is one of Python's integral types. A",
+                "// `bool` is an `int` in Python's numeric tower and a distinct type in Go,",
+                "// so `True + 1` has to come from here too.",
+                "switch typed := value.(type) {",
+                "case int:",
+                "\treturn typed, true",
+                "case uint:",
+                "\treturn int(typed), true",
+                "case int8:",
+                "\treturn int(typed), true",
+                "case int16:",
+                "\treturn int(typed), true",
+                "case int32:",
+                "\treturn int(typed), true",
+                "case int64:",
+                "\treturn int(typed), true",
+                "case uint8:",
+                "\treturn int(typed), true",
+                "case uint16:",
+                "\treturn int(typed), true",
+                "case uint32:",
+                "\treturn int(typed), true",
+                "case uint64:",
+                "\treturn int(typed), true",
+                "case bool:",
+                "\tif typed {",
+                "\t\treturn 1, true",
+                "\t}",
+                "\treturn 0, true",
+                "}",
+                "reflected := reflect.ValueOf(value)",
+                "if reflected.IsValid() {",
+                "\tswitch reflected.Kind() {",
+                "\tcase reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:",
+                "\t\treturn int(reflected.Int()), true",
+                "\tcase reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:",
+                "\t\treturn int(reflected.Uint()), true",
+                "\t}",
+                "}",
+                "return 0, false",
+            ],
+        },
+        Helper {
+            name: "gsetAdd",
+            signature: "func gsetAdd(left, right interface{}) interface{}",
+            imports: &["fmt"],
+            deps: &["gsetWhole", "gsetNumber", "gsetConcat"],
+            body: &[
+                "// Python's `+` is one operator over three kinds of operand: numbers add,",
+                "// two sequences of the same kind concatenate, and nothing else is defined",
+                "// at all. Go's `+` is three operators with none of those rules, so an",
+                "// operand the source never typed comes here instead.",
+                "if leftWhole, ok := gsetWhole(left); ok {",
+                "\tif rightWhole, rightOk := gsetWhole(right); rightOk {",
+                "\t\treturn leftWhole + rightWhole",
+                "\t}",
+                "}",
+                "if leftNumber, ok := gsetNumber(left); ok {",
+                "\tif rightNumber, rightOk := gsetNumber(right); rightOk {",
+                "\t\treturn leftNumber + rightNumber",
+                "\t}",
+                "}",
+                "if combined, ok := gsetConcat(left, right); ok {",
+                "\treturn combined",
+                "}",
+                "panic(fmt.Sprintf(\"gset: unsupported operand types for +: %T and %T\", left, right))",
+            ],
+        },
+        Helper {
+            name: "gsetSub",
+            signature: "func gsetSub(left, right interface{}) interface{}",
+            imports: &["fmt"],
+            deps: &["gsetWhole", "gsetNumber"],
+            body: &[
+                "if leftWhole, ok := gsetWhole(left); ok {",
+                "\tif rightWhole, rightOk := gsetWhole(right); rightOk {",
+                "\t\treturn leftWhole - rightWhole",
+                "\t}",
+                "}",
+                "if leftNumber, ok := gsetNumber(left); ok {",
+                "\tif rightNumber, rightOk := gsetNumber(right); rightOk {",
+                "\t\treturn leftNumber - rightNumber",
+                "\t}",
+                "}",
+                "panic(fmt.Sprintf(\"gset: unsupported operand types for -: %T and %T\", left, right))",
+            ],
+        },
+        Helper {
+            name: "gsetMul",
+            signature: "func gsetMul(left, right interface{}) interface{}",
+            imports: &["fmt"],
+            deps: &["gsetWhole", "gsetNumber", "gsetRepeat"],
+            body: &[
+                "// `*` is the other operator Python overloads onto sequences: a string or",
+                "// a list times an integer repeats, and which side the sequence is on",
+                "// matters, because only a sequence may be repeated.",
+                "if count, ok := gsetWhole(right); ok {",
+                "\tif repeated, repeatOk := gsetRepeat(left, count); repeatOk {",
+                "\t\treturn repeated",
+                "\t}",
+                "\tif leftNumber, numberOk := gsetNumber(left); numberOk {",
+                "\t\treturn float64(count) * leftNumber",
+                "\t}",
+                "}",
+                "if count, ok := gsetWhole(left); ok {",
+                "\tif repeated, repeatOk := gsetRepeat(right, count); repeatOk {",
+                "\t\treturn repeated",
+                "\t}",
+                "\tif rightNumber, numberOk := gsetNumber(right); numberOk {",
+                "\t\treturn float64(count) * rightNumber",
+                "\t}",
+                "}",
+                "if leftWhole, ok := gsetWhole(left); ok {",
+                "\tif rightWhole, rightOk := gsetWhole(right); rightOk {",
+                "\t\treturn leftWhole * rightWhole",
+                "\t}",
+                "}",
+                "if leftNumber, ok := gsetNumber(left); ok {",
+                "\tif rightNumber, rightOk := gsetNumber(right); rightOk {",
+                "\t\treturn leftNumber * rightNumber",
+                "\t}",
+                "}",
+                "panic(fmt.Sprintf(\"gset: unsupported operand types for *: %T and %T\", left, right))",
+            ],
+        },
+        Helper {
+            name: "gsetMod",
+            signature: "func gsetMod(left, right interface{}) interface{}",
+            imports: &["fmt", "math"],
+            deps: &["gsetWhole", "gsetNumber"],
+            body: &[
+                "// Go's `%` takes the sign of the dividend and Python's takes the sign of",
+                "// the divisor, so an integer remainder that comes out with the wrong sign",
+                "// is corrected rather than returned.",
+                "if leftWhole, ok := gsetWhole(left); ok {",
+                "\tif rightWhole, rightOk := gsetWhole(right); rightOk {",
+                "\t\tif rightWhole == 0 {",
+                "\t\t\tpanic(\"gset: integer modulo by zero\")",
+                "\t\t}",
+                "\t\tremainder := leftWhole % rightWhole",
+                "\t\tif remainder != 0 && ((remainder < 0) != (rightWhole < 0)) {",
+                "\t\t\tremainder += rightWhole",
+                "\t\t}",
+                "\t\treturn remainder",
+                "\t}",
+                "}",
+                "if leftNumber, ok := gsetNumber(left); ok {",
+                "\tif rightNumber, rightOk := gsetNumber(right); rightOk {",
+                "\t\treturn math.Mod(leftNumber, rightNumber)",
+                "\t}",
+                "}",
+                "panic(fmt.Sprintf(\"gset: unsupported operand types for %%: %T and %T\", left, right))",
+            ],
+        },
+        Helper {
+            name: "gsetFloat",
+            signature: "func gsetFloat(value interface{}) float64",
+            imports: &["fmt", "strconv"],
+            deps: &["gsetNumber"],
+            body: &[
+                "// Python's `float` converts a number, converts a `bool` to 1.0 or 0.0,",
+                "// and parses a string. Go's `float64(...)` rejects a string at compile time,",
+                "// so a value the source never typed is asked about here instead.",
+                "if number, ok := gsetNumber(value); ok {",
+                "\treturn number",
+                "}",
+                "if flag, ok := value.(bool); ok {",
+                "\tif flag {",
+                "\t\treturn 1",
+                "\t}",
+                "\treturn 0",
+                "}",
+                "if text, ok := value.(string); ok {",
+                "\tparsed, err := strconv.ParseFloat(text, 64)",
+                "\tif err != nil {",
+                "\t\tpanic(fmt.Sprintf(\"gset: float(%q): %v\", text, err))",
+                "\t}",
+                "\treturn parsed",
+                "}",
+                "panic(fmt.Sprintf(\"gset: float() of a %T\", value))",
+            ],
+        },
+        Helper {
+            name: "gsetInt",
+            signature: "func gsetInt(value interface{}) int",
+            imports: &["fmt", "strconv"],
+            deps: &["gsetNumber"],
+            body: &[
+                "// Python's `int` truncates towards zero, converts a `bool` to 1 or 0, and",
+                "// parses a string, while Go's `int(...)` accepts neither a float nor a",
+                "// string at all.",
+                "if number, ok := gsetNumber(value); ok {",
+                "\treturn int(number)",
+                "}",
+                "if flag, ok := value.(bool); ok {",
+                "\tif flag {",
+                "\t\treturn 1",
+                "\t}",
+                "\treturn 0",
+                "}",
+                "if text, ok := value.(string); ok {",
+                "\tparsed, err := strconv.Atoi(text)",
+                "\tif err != nil {",
+                "\t\tpanic(fmt.Sprintf(\"gset: int(%q): %v\", text, err))",
+                "\t}",
+                "\treturn parsed",
+                "}",
+                "panic(fmt.Sprintf(\"gset: int() of a %T\", value))",
             ],
         },
         Helper {
@@ -3292,6 +3789,325 @@ fn numeric_promotion(lhs: &Expr, rhs: &Expr) -> Option<(bool, bool)> {
     match (numeric_rank(&lhs.ty), numeric_rank(&rhs.ty)) {
         (Some(1), Some(2)) => Some((true, false)),
         (Some(2), Some(1)) => Some((false, true)),
+        _ => None,
+    }
+}
+
+/// Records the Go type of every value `statements` binds a name to.
+///
+/// A binding's type is what `gset-semantic` inferred for its value, rendered as
+/// Go spells it, so two spellings of one Go type count once and only genuinely
+/// different types are collected.
+fn collect_bind_types_statement(statement: &Stmt, types: &mut HashMap<String, BTreeSet<String>>) {
+    fn record(target: &Pattern, ty: Type, types: &mut HashMap<String, BTreeSet<String>>) {
+        let rendered = go_type(&ty);
+        for name in target.bound_names() {
+            types
+                .entry(name.to_string())
+                .or_default()
+                .insert(rendered.clone());
+        }
+    }
+    match statement {
+        Stmt::Assign { target, value, .. } => record(target, value.ty.clone(), types),
+        Stmt::Decl(decl) => record(
+            &decl.pattern,
+            decl.ty.clone().unwrap_or(Type::UNKNOWN),
+            types,
+        ),
+        _ => {}
+    }
+    // An assignment is an expression in Python, so `total += item` inside a
+    // loop binds a name as surely as a statement does.
+    if let Stmt::Expr(expr)
+    | Stmt::Return {
+        value: Some(expr), ..
+    } = statement
+    {
+        collect_bind_types_expr(expr, types);
+    }
+    // A binding nested in a block binds the same name, and Go fixes the
+    // variable's type at its first assignment whatever block that is in.
+    match statement {
+        Stmt::Block(block) => {
+            for nested in &block.statements {
+                collect_bind_types_statement(nested, types);
+            }
+        }
+        Stmt::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            for nested in &then_branch.statements {
+                collect_bind_types_statement(nested, types);
+            }
+            match else_branch.as_deref() {
+                Some(Else::Block(block)) => {
+                    for nested in &block.statements {
+                        collect_bind_types_statement(nested, types);
+                    }
+                }
+                Some(Else::If(nested)) => collect_bind_types_statement(nested, types),
+                None => {}
+            }
+        }
+        Stmt::While {
+            body, else_body, ..
+        }
+        | Stmt::ForIn {
+            body, else_body, ..
+        } => {
+            for nested in &body.statements {
+                collect_bind_types_statement(nested, types);
+            }
+            if let Some(else_body) = else_body {
+                for nested in &else_body.statements {
+                    collect_bind_types_statement(nested, types);
+                }
+            }
+        }
+        Stmt::For { body, .. } | Stmt::DoWhile { body, .. } | Stmt::With { body, .. } => {
+            for nested in &body.statements {
+                collect_bind_types_statement(nested, types);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_bind_types_expr(expr: &Expr, types: &mut HashMap<String, BTreeSet<String>>) {
+    if let ExprKind::Assign { target, value, .. } = &expr.kind {
+        let rendered = go_type(&value.ty);
+        for name in target.bound_names() {
+            types
+                .entry(name.to_string())
+                .or_default()
+                .insert(rendered.clone());
+        }
+    }
+    for child in expr.children() {
+        collect_bind_types_expr(child, types);
+    }
+}
+
+/// The names `statements` read.
+///
+/// A name read anywhere in the function counts as read, which is what Go's own
+/// rule asks: it looks at the declaration and any later use, not at whether the
+/// use happens on the path that assigned it.
+fn collect_reads_statement(statement: &Stmt, reads: &mut HashSet<String>) {
+    match statement {
+        Stmt::Decl(decl) => {
+            if let Some(value) = &decl.value {
+                collect_reads_expr(value, reads);
+            }
+        }
+        Stmt::Expr(expr) => collect_reads_expr(expr, reads),
+        Stmt::Assign { target, value, .. } => {
+            // `a[i] = v` reads `a` and `i`; only `a = v` writes a name.
+            if let PatternKind::Location(location) = &target.kind {
+                collect_reads_expr(location, reads);
+            }
+            collect_reads_expr(value, reads);
+        }
+        Stmt::Return {
+            value: Some(value), ..
+        } => collect_reads_expr(value, reads),
+        Stmt::Block(block) => collect_reads_block(block, reads),
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_reads_expr(condition, reads);
+            collect_reads_block(then_branch, reads);
+            collect_reads_else(else_branch.as_deref(), reads);
+        }
+        Stmt::While {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
+            collect_reads_expr(condition, reads);
+            collect_reads_block(body, reads);
+            if let Some(else_body) = else_body {
+                collect_reads_block(else_body, reads);
+            }
+        }
+        Stmt::For { body, .. } => collect_reads_block(body, reads),
+        Stmt::ForIn {
+            iterable,
+            body,
+            else_body,
+            ..
+        } => {
+            collect_reads_expr(iterable, reads);
+            collect_reads_block(body, reads);
+            if let Some(else_body) = else_body {
+                collect_reads_block(else_body, reads);
+            }
+        }
+        Stmt::DoWhile { body, .. } => collect_reads_block(body, reads),
+        Stmt::With { body, .. } => collect_reads_block(body, reads),
+        _ => {}
+    }
+}
+
+fn collect_reads_block(block: &Block, reads: &mut HashSet<String>) {
+    for statement in &block.statements {
+        collect_reads_statement(statement, reads);
+    }
+}
+
+fn collect_reads_else(else_branch: Option<&Else>, reads: &mut HashSet<String>) {
+    match else_branch {
+        Some(Else::Block(block)) => collect_reads_block(block, reads),
+        Some(Else::If(nested)) => collect_reads_statement(nested, reads),
+        None => {}
+    }
+}
+
+fn collect_reads_expr(expr: &Expr, reads: &mut HashSet<String>) {
+    if let ExprKind::Path(path) = &expr.kind
+        && path.is_bare()
+        && let Some(head) = path.segments.first()
+    {
+        reads.insert(head.to_string());
+    }
+    if let ExprKind::StructLit { path, .. } = &expr.kind
+        && let Some(head) = path.segments.first()
+    {
+        reads.insert(head.to_string());
+    }
+    for child in expr.children() {
+        collect_reads_expr(child, reads);
+    }
+}
+
+/// The names `statements` bind on every path through them.
+///
+/// A name bound by an assignment binds from there on, a name bound inside an
+/// `if` binds afterwards only when every path through that `if` binds it, and
+/// a name bound in a loop body does not bind at all, because the body may not
+/// run. Nested blocks bind nothing outside themselves, since Go — and
+/// Python — scope a name to the block that assigns it.
+fn definitely_bound(statements: &[Stmt]) -> HashSet<String> {
+    let mut bound = HashSet::new();
+    for statement in statements {
+        match statement {
+            Stmt::Assign { target, .. } => {
+                for name in target.bound_names() {
+                    bound.insert(name.to_string());
+                }
+            }
+            Stmt::Decl(decl) => {
+                for name in decl.pattern.bound_names() {
+                    bound.insert(name.to_string());
+                }
+            }
+            Stmt::Block(block) => {
+                bound.extend(definitely_bound(&block.statements));
+            }
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let mut paths = definitely_bound(&then_branch.statements);
+                let other = match else_branch.as_deref() {
+                    Some(Else::Block(block)) => definitely_bound(&block.statements),
+                    Some(Else::If(nested)) => {
+                        definitely_bound(std::slice::from_ref(nested.as_ref()))
+                    }
+                    // Without an else, the condition may be false and bind
+                    // nothing at all.
+                    None => HashSet::new(),
+                };
+                paths = paths.intersection(&other).cloned().collect();
+                bound.extend(paths);
+            }
+            _ => {}
+        }
+    }
+    bound
+}
+
+/// The type each name is assigned, taking the last assignment when there are
+/// several.
+///
+/// The types here come from `gset-semantic`, which ran before this emitter and
+/// is a statement of what the source computes, not a guess made here.
+fn assignment_types(statements: &[Stmt]) -> HashMap<String, Type> {
+    let mut types = HashMap::new();
+    for statement in statements {
+        match statement {
+            Stmt::Assign { target, value, .. } => {
+                for name in target.bound_names() {
+                    types.insert(name.to_string(), value.ty.clone());
+                }
+            }
+            Stmt::Decl(decl) => {
+                for name in decl.pattern.bound_names() {
+                    types.insert(name.to_string(), decl.ty.clone().unwrap_or(Type::UNKNOWN));
+                }
+            }
+            Stmt::Block(block) => {
+                types.extend(assignment_types(&block.statements));
+            }
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                types.extend(assignment_types(&then_branch.statements));
+                match else_branch.as_deref() {
+                    Some(Else::Block(block)) => {
+                        types.extend(assignment_types(&block.statements));
+                    }
+                    Some(Else::If(nested)) => {
+                        types.extend(assignment_types(std::slice::from_ref(nested.as_ref())));
+                    }
+                    None => {}
+                }
+            }
+            Stmt::While {
+                body, else_body, ..
+            }
+            | Stmt::ForIn {
+                body, else_body, ..
+            } => {
+                types.extend(assignment_types(&body.statements));
+                if let Some(else_body) = else_body {
+                    types.extend(assignment_types(&else_body.statements));
+                }
+            }
+            Stmt::For { body, .. } | Stmt::DoWhile { body, .. } | Stmt::With { body, .. } => {
+                types.extend(assignment_types(&body.statements));
+            }
+            _ => {}
+        }
+    }
+    types
+}
+
+/// The helper that answers an arithmetic operation on an operand the source
+/// never typed, if this backend has one.
+///
+/// A bitwise operator is not among them: Python's `&` is a whole different
+/// thing on a set, a bytes object and a bool than it is on an integer, and
+/// guessing which one the source meant is the answer a transpiler must not
+/// give.
+fn dynamic_arithmetic_helper(op: BinaryOp) -> Option<&'static str> {
+    match op {
+        BinaryOp::Add => Some("gsetAdd"),
+        BinaryOp::Sub => Some("gsetSub"),
+        BinaryOp::Mul => Some("gsetMul"),
+        BinaryOp::Rem => Some("gsetMod"),
+        // `//`, `/` and `**` are answered before this point: each already
+        // chooses between an int and a float form of its own.
         _ => None,
     }
 }

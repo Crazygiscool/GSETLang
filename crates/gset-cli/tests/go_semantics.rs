@@ -270,6 +270,79 @@ print(a == c)
 ",
         },
         Case {
+            name: "untyped_arithmetic_answers_at_runtime",
+            source: "\
+def twice(value):
+    return value * 2
+
+def offset(value):
+    return value - 1
+
+def remainder(value):
+    return value % 3
+
+def join(left, right):
+    return left + right
+
+for argument in (3, 2.5, True):
+    print(twice(argument))
+    print(offset(argument))
+    print(remainder(argument))
+print(join(1, 2))
+print(join(1.5, 2))
+print(join(\"a\", \"b\"))
+print(len(join([1], [2])))
+print(join([1], [2])[0] + 10)
+print(remainder(-7))
+",
+        },
+        Case {
+            name: "a_name_bound_by_every_branch_outlives_the_branch",
+            source: "\
+def label(ready):
+    if ready:
+        chosen = \"fast\"
+    else:
+        chosen = \"slow\"
+    return chosen
+
+def total(items):
+    count = 0
+    for item in items:
+        count = count + item
+    if count > 2:
+        result = \"many\"
+    else:
+        result = \"few\"
+    return result
+
+print(label(True))
+print(label(False))
+print(total([1, 2]))
+print(total([1, 2, 3, 4]))
+",
+        },
+        Case {
+            name: "conversions_follow_python",
+            source: "\
+def as_float(value):
+    return float(value)
+
+def as_int(value):
+    return int(value)
+
+print(as_float(3))
+print(as_float(2.5))
+print(as_float(\"2.5\"))
+print(as_float(True))
+print(as_int(3.9))
+print(as_int(-3.9))
+print(as_int(\"7\"))
+print(as_int(False))
+print(sum([1, 2, 3]))
+",
+        },
+        Case {
             name: "untyped_parameters_compare_at_runtime",
             source: "\
 def larger(a, b):
