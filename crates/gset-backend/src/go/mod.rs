@@ -134,6 +134,7 @@ impl Backend for Go {
 }
 
 /// What one declared function's parameters look like, for binding calls.
+#[allow(dead_code)]
 struct FnShape {
     /// The parameter names, in declaration order.
     params: Vec<gset_ir::Name>,
@@ -223,6 +224,7 @@ struct Emitter<'a> {
     /// import instead of emitting a call to something that was never defined.
     dropped_imports: HashSet<String>,
     /// The parameter list of every function the module declares.
+    #[allow(dead_code)]
     functions: HashMap<gset_ir::Name, FnShape>,
     /// Whether the expression being emitted is a statement of its own.
     ///
@@ -421,6 +423,7 @@ impl<'a> Emitter<'a> {
     /// named value goes. Everything else — a builtin, a name nothing defines,
     /// a call through a value — is reported by the caller rather than guessed
     /// at, because the parameter names are what the keyword argument means.
+    #[allow(dead_code)]
     fn bound_arguments<'expr>(
         &self,
         callee: &Expr,
