@@ -371,6 +371,47 @@ print(reduce_all([1, 2, 3, 4], lambda a, b: a + b, 0))
 ",
         },
         Case {
+            name: "an_fstring_hole_prints_what_python_prints",
+            source: "\
+name = \"world\"
+count = 3
+ratio = 0.5
+flag = True
+nothing = None
+items = [1, 2]
+
+print(f\"hello {name}\")
+print(f\"{count} and {count + 1}\")
+print(f\"{name!r} {count!r}\")
+print(f\"{{{count}}}\")
+print(f\"{ratio:.2f} {count:03d}\")
+print(f\"{flag} {nothing}\")
+print(f\"nested {f\"inner {name}\"} done\")
+print(f\"list {items}\")
+print(f\"{name!s} {ratio!s}\")
+print(f\"{name!r} {ratio!r}\")
+",
+        },
+        Case {
+            name: "a_specifier_needs_a_known_number",
+            source: "\
+def format_ratio(value: float) -> str:
+    return f\"{value:.3f}\"
+
+def format_count(value: int) -> str:
+    return f\"[{value:04d}]\"
+
+def pad(name: str) -> str:
+    return f\"|{name:>6}|\"
+
+print(format_ratio(2.5))
+print(format_ratio(1))
+print(format_count(7))
+print(format_count(1234))
+print(pad(\"ab\"))
+",
+        },
+        Case {
             name: "untyped_parameters_compare_at_runtime",
             source: "\
 def larger(a, b):

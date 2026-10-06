@@ -71,6 +71,32 @@ pub fn infer(module: &mut Module) -> gset_ir::DiagnosticBag {
         }
     }
 
+    // Python binds a module-level name when the module finishes loading, so a
+    // function written above the assignment still sees the type of the value
+    // declared below it. Every module-level name is therefore inferred from its
+    // value before any body is walked, which also lets one global refer to
+    // another declared after it.
+    for index in 0..module.items.len() {
+        let Item::Global(global) = &mut module.items[index] else {
+            continue;
+        };
+        let Some(binding) = global.pattern.single_binding() else {
+            continue;
+        };
+        // Each value is read in a copy of the scope, so a name this pass has
+        // not reached yet reads as unknown instead of as something wrong.
+        let mut scope = env.clone();
+        let value = global
+            .value
+            .as_mut()
+            .map(|value| infer_expr(value, &functions, &mut scope));
+        let ty = global.ty.clone().or(value).unwrap_or(Type::UNKNOWN);
+        if global.ty.is_none() && ty.is_known() {
+            global.ty = Some(ty.clone());
+        }
+        env.define(binding.clone(), ty);
+    }
+
     for index in 0..module.items.len() {
         match &mut module.items[index] {
             Item::Function(function) => {
@@ -115,6 +141,7 @@ fn signature_of(function: &Function) -> Type {
 /// pushes one more. A lookup searches from the innermost scope outward, which is
 /// what lets a local shadow a module-level name instead of the two being
 /// indistinguishable at emit time.
+#[derive(Clone)]
 struct Env {
     scopes: Vec<HashMap<Name, Type>>,
     lang: LangId,

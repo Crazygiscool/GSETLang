@@ -634,8 +634,14 @@ pub enum ExprKind {
         segments: Vec<String>,
         /// The interpolated expressions, in order.
         arguments: Vec<Expr>,
-        /// How the source wanted the value rendered.
-        format: Option<String>,
+        /// How the source wanted each value rendered, one entry per
+        /// argument.
+        ///
+        /// A hole without a specifier has no entry, and a specifier belongs to
+        /// the hole it was written on: `f"{a}{b:.2f}"` renders its second value
+        /// differently from its first, so keeping one rendering for the whole
+        /// string would lose that.
+        formats: Vec<Option<String>>,
     },
 
     /// Unpacking in an expression position, such as Python's `*rest`.
@@ -1180,7 +1186,7 @@ mod tests {
             ExprKind::Format {
                 segments: vec!["a".into(), "b".into(), "c".into()],
                 arguments: vec![Expr::path("x", span()), Expr::path("y", span())],
-                format: Some(">10".into()),
+                formats: vec![Some(">10".into())],
             },
             span(),
         );

@@ -2573,7 +2573,7 @@ impl<'a> Lowerer<'a> {
         let mut segments = Vec::new();
         let mut arguments = Vec::new();
         let mut current = String::new();
-        let mut specifiers: Vec<String> = Vec::new();
+        let mut formats: Vec<Option<String>> = Vec::new();
 
         for child in named_children(node) {
             match child.kind() {
@@ -2589,20 +2589,19 @@ impl<'a> Lowerer<'a> {
                         continue;
                     };
                     arguments.push(self.expr(expression));
-                    // `!r` and the format spec belong to the rendering, not to
-                    // the value. The IR has one `format` slot for the whole
-                    // string, so several different specs cannot all be kept; a
-                    // warning says which were dropped rather than losing them.
+                    // `!r` and the specifier belong to the rendering, not to
+                    // the value, and each hole keeps its own.
                     let mut spec = String::new();
                     if let Some(conversion) = child.child_by_field_name("type_conversion") {
+                        // The source writes the `!`, and keeping it is what
+                        // tells a conversion (`!r`) apart from a specifier that
+                        // spells the same letter (`s`).
                         spec.push_str(self.text_of(conversion).trim_end_matches('!'));
                     }
                     if let Some(format) = child.child_by_field_name("format_specifier") {
                         spec.push_str(self.text_of(format));
                     }
-                    if !spec.is_empty() {
-                        specifiers.push(spec);
-                    }
+                    formats.push((!spec.is_empty()).then_some(spec));
                 }
                 other => self.unsupported(child, other),
             }
@@ -2616,40 +2615,11 @@ impl<'a> Lowerer<'a> {
             .map(|segment| unescape_braces(segment))
             .collect();
 
-        let format = if specifiers.is_empty() {
-            None
-        } else {
-            let distinct: Vec<&String> = {
-                let mut seen: Vec<&String> = Vec::new();
-                for spec in &specifiers {
-                    if !seen.contains(&spec) {
-                        seen.push(spec);
-                    }
-                }
-                seen
-            };
-            if distinct.len() > 1 {
-                self.builder.report(
-                    Diagnostic::warning(
-                        span,
-                        format!(
-                            "this f-string uses {} different renderings; the IR carries one, so \
-                             only {:?} is recorded",
-                            distinct.len(),
-                            distinct[0]
-                        ),
-                    )
-                    .with_code("gset-python-format-spec"),
-                );
-            }
-            Some(distinct[0].clone())
-        };
-
         Expr::new(
             ExprKind::Format {
                 segments,
                 arguments,
-                format,
+                formats,
             },
             span,
         )
