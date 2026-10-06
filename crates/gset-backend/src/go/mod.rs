@@ -133,6 +133,16 @@ impl Backend for Go {
     }
 }
 
+/// What one declared function's parameters look like, for binding calls.
+#[allow(dead_code)]
+struct FnShape {
+    /// The parameter names, in declaration order.
+    params: Vec<gset_ir::Name>,
+    /// Whether the function takes `*args` or `**kwargs`, which no single
+    /// parameter list can describe.
+    variadic: bool,
+}
+
 /// One emission run.
 struct Emitter<'a> {
     out: &'a mut CodeWriter,
@@ -213,6 +223,9 @@ struct Emitter<'a> {
     /// The name is recorded rather than forgotten, so a use of it reports the
     /// import instead of emitting a call to something that was never defined.
     dropped_imports: HashSet<String>,
+    /// The parameter list of every function the module declares.
+    #[allow(dead_code)]
+    functions: HashMap<gset_ir::Name, FnShape>,
     /// Whether the expression being emitted is a statement of its own.
     ///
     /// Python's mutating methods return `None` but Go's equivalent returns the
@@ -240,6 +253,7 @@ impl<'a> Emitter<'a> {
             loop_else_flags: Vec::new(),
             declared: HashSet::new(),
             dropped_imports: HashSet::new(),
+            functions: HashMap::new(),
             expression_depth: 0,
             in_statement: false,
         }
@@ -401,6 +415,34 @@ impl<'a> Emitter<'a> {
             )
             .with_code("gset-backend-import"),
         );
+    }
+
+    /// The value each parameter of the callee receives, in parameter order.
+    ///
+    /// Only a callee whose parameters the module declares can be told where a
+    /// named value goes. Everything else — a builtin, a name nothing defines,
+    /// a call through a value — is reported by the caller rather than guessed
+    /// at, because the parameter names are what the keyword argument means.
+    #[allow(dead_code)]
+    fn bound_arguments<'expr>(
+        &self,
+        callee: &Expr,
+        args: &'expr [Expr],
+        named_args: &'expr [NamedArg],
+    ) -> Result<Vec<&'expr Expr>, &'static str> {
+        let ExprKind::Path(path) = &callee.kind else {
+            return Err("keyword arguments");
+        };
+        if !path.is_bare() {
+            return Err("keyword arguments");
+        }
+        let Some(shape) = self.functions.get(&path.segments[0]) else {
+            return Err("keyword arguments");
+        };
+        if shape.variadic {
+            return Err("keyword arguments to a function that takes `*args` or `**kwargs`");
+        }
+        bind_arguments(&shape.params, args, named_args)
     }
 
     /// Records every name the module binds, in every scope.
@@ -5203,6 +5245,56 @@ fn root_name(expr: &Expr) -> Option<&str> {
 /// not bound by the module is a mistake in the source. Both report, but they
 /// are not the same defect and a diagnostic that says "this builtin" for a name
 /// the program never defined would point at the wrong thing.
+/// Binds one call's arguments to the parameters they belong to.
+///
+/// Positional arguments fill parameters from the left and each keyword
+/// argument names its own, so the result is one value per parameter in
+/// declaration order — which is what every call site emits, whatever order
+/// the source wrote.
+///
+/// Each refusal is a case where guessing would move a value to a different
+/// parameter than the source meant: a name no parameter has, a parameter
+/// given two values, and a parameter given none, which a default would fill
+/// if the IR recorded defaults and it does not.
+#[allow(dead_code)]
+fn bind_arguments<'expr>(
+    params: &[gset_ir::Name],
+    args: &'expr [Expr],
+    named_args: &'expr [NamedArg],
+) -> Result<Vec<&'expr Expr>, &'static str> {
+    if params.iter().any(|param| param.is_empty()) {
+        return Err("keyword arguments to a function whose parameters are not plain names");
+    }
+    if args.len() > params.len() {
+        return Err("a call with more positional arguments than the callee has parameters");
+    }
+    let mut bound: Vec<Option<&Expr>> = vec![None; params.len()];
+    for (index, arg) in args.iter().enumerate() {
+        bound[index] = Some(arg);
+    }
+    for named in named_args {
+        let Some(index) = params
+            .iter()
+            .position(|param| param.as_ref() == named.name.as_ref())
+        else {
+            return Err("a keyword argument no parameter of the callee names");
+        };
+        if bound[index].is_some() {
+            return Err("a parameter given a value twice");
+        }
+        bound[index] = Some(&named.value);
+    }
+    if bound.iter().any(Option::is_none) {
+        return Err(
+            "a call that leaves a parameter without a value, and defaults are not recorded",
+        );
+    }
+    Ok(bound
+        .into_iter()
+        .map(|value| value.expect("every parameter is bound"))
+        .collect())
+}
+
 fn python_builtins() -> &'static [&'static str] {
     &[
         "abs",
