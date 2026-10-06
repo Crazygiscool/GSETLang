@@ -1580,6 +1580,20 @@ impl<'a> Emitter<'a> {
                 return self.unusable_value_of(Some(ty), call);
             }
         }
+        // A callee whose Go type is `interface{}` holds a function at runtime,
+        // and Go cannot call that. Calling through a helper keeps Python's rule
+        // — whatever the name holds is what gets called — instead of emitting a
+        // call the compiler rejects.
+        if self.go_type_of(callee).is_none() {
+            let helper = self.use_helper("gsetCall");
+            let callee = self.emit_expr(callee);
+            let mut call = format!("{helper}({callee}");
+            for argument in rendered {
+                call.push_str(&format!(", {argument}"));
+            }
+            call.push(')');
+            return call;
+        }
         let callee = self.emit_expr(callee);
         format!("{callee}({})", rendered.join(", "))
     }
@@ -2873,6 +2887,44 @@ fn helpers() -> &'static [Helper] {
                 "\t}",
                 "}",
                 "return repeated, true",
+            ],
+        },
+        Helper {
+            name: "gsetCall",
+            signature: "func gsetCall(callee interface{}, args ...interface{}) interface{}",
+            imports: &["fmt", "reflect"],
+            deps: &[],
+            body: &[
+                "// Python calls whatever the name happens to hold, so a function",
+                "// passed as an argument is called like any other. Go needs a",
+                "// function type at the call site and has no operator for an",
+                "// `interface{}` that holds one, so the call goes through",
+                "// reflection here.",
+                "value := reflect.ValueOf(callee)",
+                "if !value.IsValid() || value.Kind() != reflect.Func {",
+                "\tpanic(fmt.Sprintf(\"gset: calling a %T\", callee))",
+                "}",
+                "arguments := make([]reflect.Value, 0, len(args))",
+                "for _, argument := range args {",
+                "\tif argument == nil {",
+                "\t\targuments = append(arguments, reflect.Zero(value.Type().In(len(arguments))))",
+                "\t\tcontinue",
+                "\t}",
+                "\targuments = append(arguments, reflect.ValueOf(argument))",
+                "}",
+                "results := value.Call(arguments)",
+                "switch len(results) {",
+                "case 0:",
+                "\treturn nil",
+                "case 1:",
+                "\treturn results[0].Interface()",
+                "}",
+                "// Several results are a tuple, which is what the source returned.",
+                "tuple := make([]interface{}, 0, len(results))",
+                "for _, result := range results {",
+                "\ttuple = append(tuple, result.Interface())",
+                "}",
+                "return tuple",
             ],
         },
         Helper {

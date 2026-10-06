@@ -343,6 +343,34 @@ print(sum([1, 2, 3]))
 ",
         },
         Case {
+            name: "calling_a_function_passed_as_a_value",
+            source: "\
+def apply(fn, value):
+    return fn(value)
+
+def twice(value):
+    return value * 2
+
+def add(amount):
+    def add_to(value):
+        return value + amount
+
+    return add_to
+
+def reduce_all(values, fn, initial):
+    accumulator = initial
+    for value in values:
+        accumulator = fn(accumulator, value)
+    return accumulator
+
+print(apply(twice, 21))
+print(apply(lambda v: v + 1, 41))
+print(apply(add(10), 5))
+print(reduce_all([1, 2, 3, 4], lambda a, b: a * b, 1))
+print(reduce_all([1, 2, 3, 4], lambda a, b: a + b, 0))
+",
+        },
+        Case {
             name: "untyped_parameters_compare_at_runtime",
             source: "\
 def larger(a, b):

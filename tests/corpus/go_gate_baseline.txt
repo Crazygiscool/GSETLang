@@ -10,7 +10,7 @@ backend    destructuring
 backend    exceptions
 ok         fib
 backend    fstrings
-invalid    higher_order
+ok         higher_order
 backend    imports
 backend    lambdas
 backend    literals
@@ -22,4 +22,4 @@ frontend   operators
 ok         returns
 ok         typed
 
-5 ok / 1 frontend / 16 backend / 0 malformed / 1 invalid
+6 ok / 1 frontend / 16 backend / 0 malformed / 0 invalid
