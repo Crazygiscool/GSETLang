@@ -9,17 +9,17 @@ backend    decorators
 backend    destructuring
 backend    exceptions
 ok         fib
-backend    fstrings
+ok         fstrings
 ok         higher_order
 backend    imports
 backend    lambdas
 backend    literals
 backend    loops
-backend    module_shape
+ok         module_shape
 ok         null_handling
 backend    numeric_literals
 frontend   operators
 ok         returns
 ok         typed
 
-6 ok / 1 frontend / 16 backend / 0 malformed / 0 invalid
+8 ok / 1 frontend / 14 backend / 0 malformed / 0 invalid

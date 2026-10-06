@@ -11,6 +11,11 @@ import logging
 log = logging.getLogger(__name__)
 
 
+def staticmethod_like(subject):
+    """Bound here so the class decorator below resolves."""
+    return subject
+
+
 @log.debug
 def traced(value):
     return value

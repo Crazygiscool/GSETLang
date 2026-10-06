@@ -22,7 +22,7 @@ def nested(name):
     return f"outer {f'inner {name}'}"
 
 
-def multi():
+def multi(a, b, c):
     return f"{a}-{b}-{c}"
 
 
