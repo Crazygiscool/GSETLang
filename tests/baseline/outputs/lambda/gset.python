@@ -1,2 +1,0 @@
-f = lambda x: None
-print(f(2))

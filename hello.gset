@@ -1,3 +1,0 @@
-shout=fmt.Println
----
-shout("Hello from GSET!")

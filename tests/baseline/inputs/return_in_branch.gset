@@ -1,6 +1,0 @@
-function pick(n) {
-    if n > 0 {
-        return 1
-    }
-}
-print(pick(5))

@@ -1,4 +1,0 @@
-if 1 > 0:
-    print("one")
-2 > 0
-print("two")

@@ -1,5 +1,0 @@
-if 1 > 0 {
-    print("one")
-}
-x = 1 ?? 2
-print(x)

@@ -1,2 +1,0 @@
-x = 1 if 1 is not None else 2
-print(x)
