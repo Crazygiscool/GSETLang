@@ -1,0 +1,23 @@
+[package]
+name = "gset-frontend"
+description = "Source-language frontends that lower concrete syntax trees into the GSET IR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["python"]
+# One feature per source language. Each grammar is generated C and costs
+# seconds to compile, so a language that is not being used should not be built.
+# This is what makes the plan's claim true: a build that enables only the
+# languages it needs never compiles the rest.
+python = ["dep:tree-sitter-python"]
+
+[dependencies]
+gset-ir = { workspace = true }
+tree-sitter = "0.27"
+tree-sitter-python = { version = "0.25", optional = true }
+thiserror = { workspace = true }

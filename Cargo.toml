@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/gset-ir",
+    "crates/gset-frontend",
+    "crates/gset-backend",
+    "crates/gset-semantic",
+    "crates/gset-deps",
+    "crates/gset-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Crazygiscool/GSETLang"
+authors = ["GSET Team"]
+
+[workspace.dependencies]
+# Internal crates
+gset-ir = { path = "crates/gset-ir", version = "0.1.0" }
+gset-frontend = { path = "crates/gset-frontend", version = "0.1.0" }
+gset-backend = { path = "crates/gset-backend", version = "0.1.0" }
+gset-semantic = { path = "crates/gset-semantic", version = "0.1.0" }
+gset-deps = { path = "crates/gset-deps", version = "0.1.0" }
+gset-cli = { path = "crates/gset-cli", version = "0.1.0" }
+
+# External
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.9"
+thiserror = "2.0"
+rayon = "1.10"
+criterion = { version = "0.7", features = ["html_reports"] }
+
+# Release profile. Optimised for CLI startup latency, which is the dominant
+# cost in a per-invocation transpiler. `lto = "fat"` lets the linker drop
+# unreachable grammar code; `panic = "abort"` removes landing pads.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.bench]
+lto = "fat"
+codegen-units = 1

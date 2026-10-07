@@ -1,0 +1,16 @@
+[package]
+name = "gset-semantic"
+description = "Symbol resolution, type inference and import graphs over the GSET IR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+gset-ir = { workspace = true }
+rayon = { workspace = true }
+
+[dev-dependencies]
+gset-frontend = { workspace = true }

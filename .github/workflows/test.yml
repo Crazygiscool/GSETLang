@@ -7,87 +7,33 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  rust:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
         with:
-          go-version: '1.21'
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Build
-        run: go build -o gset .
+        run: cargo build --workspace --all-targets
 
-      - name: Run unit tests
-        run: go test -short ./... -v
+      - name: Test
+        run: cargo test --workspace
 
-      - name: Run test files
-        run: |
-          ./gset transpile test/variables.gset
-          ./gset transpile test/for_loops.gset
-          ./gset transpile test/while_loops.gset
-          ./gset transpile test/conditionals.gset
-          ./gset transpile test/functions.gset
-          ./gset transpile test/comprehensive.gset
-
-      - name: Verify build output
-        run: |
-          ./gset transpile test/comprehensive.gset > /tmp/output.go
-          if grep -q "func main" /tmp/output.go; then
-            echo "✓ Functions generated correctly"
-          fi
-          if grep -q "for i in" /tmp/output.go; then
-            echo "✓ For loops generated correctly"
-          fi
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install golangci-lint
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.62.2
-
-      - name: Run golangci-lint
-        run: $(go env GOPATH)/bin/golangci-lint run ./...
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Format check
-        run: |
-          go fmt ./...
-          git diff --exit-code
+        run: cargo fmt --all -- --check
 
-  cross-build:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        goos: [linux, darwin, windows]
-        goarch: [amd64, arm64]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          OUTPUT="gset-${{ matrix.goos }}-${{ matrix.goarch }}"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            OUTPUT="${OUTPUT}.exe"
-          fi
-          GOOS=$GOOS GOARCH=$GOARCH go build -o "$OUTPUT" .
+      - name: Run cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2

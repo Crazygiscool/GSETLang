@@ -1,0 +1,28 @@
+[package]
+name = "gset-cli"
+description = "The gset command-line interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# The installed binary is named `gset`, not `gset-cli`. This is the one
+# compatibility surface the rewrite preserves: install.sh renames the extracted
+# archive member to `gset`, and every packaging manifest (winget, choco, AUR,
+# Debian) expects `gset` on PATH.
+[[bin]]
+name = "gset"
+path = "src/main.rs"
+
+[dependencies]
+gset-ir = { workspace = true }
+gset-frontend = { workspace = true }
+gset-backend = { workspace = true }
+gset-semantic = { workspace = true }
+gset-deps = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }

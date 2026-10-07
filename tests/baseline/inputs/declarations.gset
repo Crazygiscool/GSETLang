@@ -1,0 +1,13 @@
+struct Point {
+    x
+    y
+}
+
+enum Color {
+    Red
+    Green
+}
+
+class Widget {
+    name
+}

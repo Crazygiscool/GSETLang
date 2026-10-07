@@ -40,6 +40,12 @@ go.work.sum
 # Build output
 dist/
 
+# Rust / cargo build output
+/target/
+
+# Rust docs build artifacts
+target/doc/
+
 # Docs build artifacts
 docs/dist/
 docs/node_modules/
