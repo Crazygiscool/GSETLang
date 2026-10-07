@@ -7,7 +7,7 @@
 
 set -e
 
-VERSION="2.2.1"
+VERSION="0.1.0"
 REPO="Crazygiscool/GSETLang"
 
 # Check if running on Windows (Git Bash, WSL, MSYS2, Cygwin)

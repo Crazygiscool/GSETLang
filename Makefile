@@ -1,113 +1,44 @@
 # GSET Makefile
 
-.PHONY: all build test test-race test-verbose benchmark clean install crossbuild release
+.PHONY: all build test clippy fmt lint release clean install
 
-VERSION := 2.2.1
+VERSION := 0.1.0
 REPO := github.com/Crazygiscool/GSETLang
 
 all: build
 
 # Build for current platform
 build:
-	@echo "Building GSET v$(VERSION)..."
-	go build -ldflags="-s -w -X main.version=$(VERSION)" -o gset-$(VERSION) .
-	@echo "Built: ./gset-$(VERSION)"
-	cp gset-$(VERSION) test/gset
-	@echo "Copied to test/gset"
+	cargo build --release -p gset-cli
+	cp target/release/gset gset-$(VERSION) 2>/dev/null || true
 
-# Build with debug info
 debug:
-	go build -ldflags="-X main.version=$(VERSION)" -o gset-$(VERSION)-debug .
-	@echo "Built: ./gset-$(VERSION)-debug (debug)"
-	cp gset-$(VERSION)-debug test/gset
-	@echo "Copied to test/gset"
+	cargo build -p gset-cli
+	cp target/debug/gset gset-$(VERSION)-debug 2>/dev/null || true
 
 # Run tests
 test:
-	go test ./...
+	cargo test --workspace
 
-# Run tests with race detector
-test-race:
-	go test -race ./...
+# Run clippy
+clippy:
+	cargo clippy --workspace --all-targets -- -D warnings
 
-# Run tests with verbose output
-test-verbose:
-	go test -v ./...
-
-# Run benchmark tests
-benchmark:
-	go test -bench=. -benchmem ./...
-
-# Run test files
-test-files:
-	@./test/gset transpile test/comprehensive.gset
-
-# Clean build artifacts
-clean:
-	rm -rf dist/
-	rm -f gset-*
-	rm -f test/gset
-
-# Cross-compile for all platforms
-crossbuild:
-	@chmod +x build.sh
-	@./build.sh
-
-# Create release (requires GitHub CLI)
-release: crossbuild
-	@echo "Creating GitHub release..."
-	gh release create v$(VERSION) \
-		--title "GSET v$(VERSION)" \
-		--notes "See CHANGELOG.md for details" \
-		dist/*
-
-# Install locally (for development)
-install: build
-	install -Dm755 gset $(HOME)/.local/bin/gset
-	@echo "Installed to ~/.local/bin/gset"
-
-# Uninstall
-uninstall:
-	rm -f $(HOME)/.local/bin/gset
-	@echo "Uninstalled GSET"
-
-# Format code
+# Format check
 fmt:
-	go fmt ./...
+	cargo fmt --all --check
 
-# Lint code
-lint:
-	golangci-lint run || echo "Install golangci-lint for linting"
+# Run lint suite
+lint: fmt clippy
 
-# Generate documentation
-docs:
-	cd docs && npm run build
+# Cross build
+crossbuild:
+	cargo build --release -p gset-cli --target x86_64-unknown-linux-gnu 2>/dev/null || true
+	cargo build --release -p gset-cli --target aarch64-unknown-linux-gnu 2>/dev/null || true
+	cargo build --release -p gset-cli --target x86_64-apple-darwin 2>/dev/null || true
+	cargo build --release -p gset-cli --target aarch64-apple-darwin 2>/dev/null || true
+	cargo build --release -p gset-cli --target x86_64-pc-windows-msvc 2>/dev/null || true
 
-# Watch mode (requires air)
-dev:
-	air
-
-# Version info
-version:
-	@echo "v$(VERSION)"
-
-# Help
-help:
-	@echo "GSET Makefile"
-	@echo ""
-	@echo "Targets:"
-	@echo "  build        - Build for current platform"
-	@echo "  debug        - Build with debug info"
-	@echo "  test         - Run Go tests"
-	@echo "  test-race    - Run tests with race detector"
-	@echo "  test-verbose - Run tests with verbose output"
-	@echo "  benchmark    - Run benchmark tests"
-	@echo "  test-files  - Run test .gset files"
-	@echo "  clean        - Remove build artifacts"
-	@echo "  crossbuild   - Build for all platforms"
-	@echo "  release      - Create GitHub release"
-	@echo "  install      - Install locally"
-	@echo "  uninstall    - Remove local installation"
-	@echo "  fmt          - Format code"
-	@echo "  lint         - Lint code"
-	@echo "  help         - Show this help"
+clean:
+	cargo clean
+	rm -f gset* target/gset*

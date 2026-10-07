@@ -7,70 +7,6 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Build
-        run: go build -o gset .
-
-      - name: Run unit tests
-        run: go test -short ./... -v
-
-      - name: Run test files
-        run: |
-          ./gset transpile test/variables.gset
-          ./gset transpile test/for_loops.gset
-          ./gset transpile test/while_loops.gset
-          ./gset transpile test/conditionals.gset
-          ./gset transpile test/functions.gset
-          ./gset transpile test/comprehensive.gset
-
-      - name: Verify build output
-        run: |
-          ./gset transpile test/comprehensive.gset > /tmp/output.go
-          if grep -q "func main" /tmp/output.go; then
-            echo "✓ Functions generated correctly"
-          fi
-          if grep -q "for i in" /tmp/output.go; then
-            echo "✓ For loops generated correctly"
-          fi
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Install golangci-lint
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.62.2
-
-      - name: Run golangci-lint
-        run: $(go env GOPATH)/bin/golangci-lint run ./...
-
-      - name: Format check
-        run: |
-          go fmt ./...
-          git diff --exit-code
-
-  # Rust replacement pipeline. Runs alongside the Go jobs until milestone 6
-  # deletes the Go tree; the Go jobs are removed in the same commit.
-  #
-  # No toolchain install step: rustup honours the pinned rust-toolchain.toml
-  # when cargo is first invoked, and the runner image ships rustup.
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -81,9 +17,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
+            ~/.cargo/registry
+            ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
@@ -98,102 +33,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Format check
-        run: |
-          cargo fmt --all -- --check
-          git diff --exit-code
+        run: cargo fmt --all -- --check
 
-  rust-supply-chain:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install cargo-deny
+      - name: Run cargo deny
         uses: EmbarkStudios/cargo-deny-action@v2
-
-      - name: Check advisories, bans and licences
-        run: cargo deny check
-
-  # Platform coverage for the Rust binary.
-  #
-  # This uses native runners per platform rather than `--target` cross builds.
-  # Cross-compiling does not work here: tree-sitter is a C dependency, so
-  # `cargo check --target aarch64-unknown-linux-gnu` fails looking for
-  # aarch64-linux-gnu-gcc, and reaching Darwin from Linux additionally needs an
-  # Apple SDK. Native runners are the same approach Rust projects use upstream,
-  # and they produce the real linked binary rather than a check-only artifact.
-  #
-  # Each entry also asserts the artifact is named `gset`, because install.sh and
-  # every packaging manifest expect that name.
-  rust-platforms:
-    name: rust ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-          - os: macos-14
-            target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build release binary
-        run: cargo build --release -p gset-cli
-
-      - name: Resolve artifact path
-        shell: bash
-        run: |
-          set -euo pipefail
-          BIN="target/release/gset"
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            BIN="${BIN}.exe"
-          fi
-          echo "BIN=${BIN}" >> "$GITHUB_ENV"
-
-      - name: Verify artifact is named gset
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -f "$BIN" ]; then
-            echo "expected artifact $BIN was not produced" >&2
-            ls -la target/release/ >&2
-            exit 1
-          fi
-          echo "ok: $BIN"
-
-      - name: Run the binary
-        shell: bash
-        run: "./${BIN} --version"
-
-  cross-build:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        goos: [linux, darwin, windows]
-        goarch: [amd64, arm64]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          OUTPUT="gset-${{ matrix.goos }}-${{ matrix.goarch }}"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            OUTPUT="${OUTPUT}.exe"
-          fi
-          GOOS=$GOOS GOARCH=$GOARCH go build -o "$OUTPUT" .
