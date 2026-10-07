@@ -1,0 +1,7 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: gset
+Source: https://github.com/Crazygiscool/GSETLang
+
+Files: *
+Copyright: 2026 GSET Team
+License: MIT or Apache-2.0

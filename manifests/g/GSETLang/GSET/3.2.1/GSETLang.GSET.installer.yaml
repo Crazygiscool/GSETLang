@@ -1,0 +1,18 @@
+PackageIdentifier: GSETLang.GSET
+PackageVersion: 3.2.1
+Installers:
+- Architecture: x64
+  InstallerType: zip
+  InstallerUrl: https://github.com/Crazygiscool/GSETLang/releases/download/v3.2.1/gset-windows-amd64.zip
+  InstallerSha256: FILL_AFTER_RELEASE
+  NestedInstallerType: portable
+  NestedInstallerFiles:
+  - RelativeFilePath: gset.exe
+    PortableCommandAlias: gset
+  InstallerSwitches:
+    Silent: /S
+    SilentWithProgress: /S
+  ValidArchitectures:
+  - x64
+ManifestType: installer
+ManifestVersion: 1.6.0

@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --locked -p gset-cli
+
+override_dh_auto_install:
+	install -Dm755 ../target/release/gset debian/gset/usr/bin/gset
+
+override_dh_auto_test:
+	cargo test --workspace

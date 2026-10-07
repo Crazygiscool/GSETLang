@@ -81,6 +81,26 @@ jobs:
             cd ..
           fi
 
+      - name: Build Debian packages
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          cargo install cargo-deb --locked
+          DEB_ARCH="amd64"
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            DEB_ARCH="arm64"
+          fi
+          mkdir -p target/debian
+          cargo deb --no-strip --package gset-cli --target ${{ matrix.target }} -o target/debian/gset-${{ steps.version.outputs.VERSION }}-${DEB_ARCH}.deb 2>/dev/null || true
+
+      - name: Upload Debian packages
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_NAME }}-deb
+          path: target/debian/*.deb
+          retention-days: 5
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

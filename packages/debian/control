@@ -1,0 +1,14 @@
+Source: gset
+Section: utils
+Priority: optional
+Maintainer: GSET Team <https://github.com/Crazygiscool/GSETLang>
+Build-Depends: debhelper-compat (= 13), cargo, rustc
+Standards-Version: 4.6.0
+Homepage: https://github.com/Crazygiscool/GSETLang
+
+Package: gset
+Architecture: any
+Depends: ${misc:Depends}
+Description: Generic Syntax Extension Tool
+ GSET is a transpiler that allows writing code in any language syntax
+ and compiling it to run on any target language's runtime.

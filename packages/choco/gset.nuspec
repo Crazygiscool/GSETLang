@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>gset</id>
+    <version>3.2.1</version>
+    <title>GSET</title>
+    <authors>GSET Team</authors>
+    <owners>Crazygiscool</owners>
+    <licenseUrl>https://github.com/Crazygiscool/GSETLang/blob/main/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/Crazygiscool/GSETLang</projectUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Generic Syntax Extension Tool - write in any language syntax, compile to any language</description>
+    <summary>Write in any syntax, compile to any target</summary>
+    <releaseNotes>https://github.com/Crazygiscool/GSETLang/releases/tag/v3.2.1</releaseNotes>
+    <tags>transpiler compiler syntax gset</tags>
+    <projectSourceUrl>https://github.com/Crazygiscool/GSETLang</projectSourceUrl>
+    <packageSourceUrl>https://github.com/Crazygiscool/GSETLang/tree/main/packages/choco</packageSourceUrl>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>
