@@ -1610,11 +1610,15 @@ impl<'a> Emitter<'a> {
                 Ok(bound) => bound,
                 Err(what) => {
                     unsupported(self.diagnostics, span, what);
-                    return self.unusable_value_of(Some(ty), "a call with keyword arguments".to_string());
+                    return self
+                        .unusable_value_of(Some(ty), "a call with keyword arguments".to_string());
                 }
             }
         };
-        let rendered: Vec<String> = bound.iter().map(|argument| self.emit_expr(argument)).collect();
+        let rendered: Vec<String> = bound
+            .iter()
+            .map(|argument| self.emit_expr(argument))
+            .collect();
         if let ExprKind::Path(path) = &callee.kind
             && path.is_bare()
         {
@@ -1639,6 +1643,26 @@ impl<'a> Emitter<'a> {
                 // set of pairs is not something Go's `sort` can see through an
                 // `interface{}` without being told to.
                 "sorted" => {
+                    if named_args.len() > 1 {
+                        unsupported(self.diagnostics, span, "keyword arguments");
+                        return self.unusable_value_of(Some(ty), "sorted()".to_string());
+                    }
+                    if let Some(key) = named_args.iter().find(|a| a.name.as_ref() == "key") {
+                        let helper = self.use_helper("gsetSortBy");
+                        return format!(
+                            "{helper}({}, {})",
+                            rendered[0].clone(),
+                            self.emit_expr(&key.value)
+                        );
+                    }
+                    if !named_args.is_empty() {
+                        unsupported(
+                            self.diagnostics,
+                            span,
+                            "a keyword argument no parameter of the callee names",
+                        );
+                        return self.unusable_value_of(Some(ty), "sorted()".to_string());
+                    }
                     let helper = self.use_helper("gsetSort");
                     return format!("{helper}({})", rendered.join(", "));
                 }
@@ -1673,6 +1697,10 @@ impl<'a> Emitter<'a> {
                 "bool" => {
                     let helper = self.use_helper("gsetTruthy");
                     return format!("{helper}({})", rendered.join(", "));
+                }
+                "enumerate" => {
+                    unsupported(self.diagnostics, span, "`enumerate` outside a loop header");
+                    return "nil".to_string();
                 }
                 "range" => {
                     // `range` only has meaning as a loop header, which
@@ -3859,6 +3887,24 @@ fn helpers() -> &'static [Helper] {
                 "// A dynamic sort cannot return the collection's own type, and an",
                 "// `interface{}` cannot be ranged over, so what it hands back is a",
                 "// slice of its elements.",
+                "items := make([]interface{}, 0, value.Len())",
+                "for index := 0; index < value.Len(); index++ {",
+                "\titems = append(items, value.Index(index).Interface())",
+                "}",
+                "return items",
+            ],
+        },
+        Helper {
+            name: "gsetSortBy",
+            signature: "func gsetSortBy(collection interface{}, key func(interface{}) interface{}) []interface{}",
+            imports: &["reflect", "sort"],
+            deps: &["gsetLess"],
+            body: &[
+                "// Stable sort keyed by the result of `key(item)`.",
+                "value := reflect.ValueOf(collection)",
+                "sort.SliceStable(value.Interface(), func(left, right int) bool {",
+                "\treturn gsetLess(key(value.Index(left).Interface()), key(value.Index(right).Interface()))",
+                "})",
                 "items := make([]interface{}, 0, value.Len())",
                 "for index := 0; index < value.Len(); index++ {",
                 "\titems = append(items, value.Index(index).Interface())",
