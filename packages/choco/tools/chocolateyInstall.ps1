@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop';
 
 $packageName = 'gset'
 $url64 = 'https://github.com/Crazygiscool/GSETLang/releases/download/v3.2.1/gset-windows-amd64.zip'
-$checksum64 = 'FILL_AFTER_RELEASE'
+$checksum64 = 'ac586e86d78f536994fddccd48a668fddc7e95f9f199f2ba58e12e6a013c8baf'
 
 $packageArgs = @{
   packageName   = $packageName
