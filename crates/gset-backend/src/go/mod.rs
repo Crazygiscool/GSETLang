@@ -1603,10 +1603,18 @@ impl<'a> Emitter<'a> {
         span: Span,
         ty: &Type,
     ) -> String {
-        if !named_args.is_empty() {
-            unsupported(self.diagnostics, span, "keyword arguments");
-        }
-        let rendered: Vec<String> = args.iter().map(|arg| self.emit_expr(arg)).collect();
+        let bound = if named_args.is_empty() {
+            args.iter().collect::<Vec<_>>()
+        } else {
+            match self.bound_arguments(callee, args, named_args) {
+                Ok(bound) => bound,
+                Err(what) => {
+                    unsupported(self.diagnostics, span, what);
+                    return self.unusable_value_of(Some(ty), "a call with keyword arguments".to_string());
+                }
+            }
+        };
+        let rendered: Vec<String> = bound.iter().map(|argument| self.emit_expr(argument)).collect();
         if let ExprKind::Path(path) = &callee.kind
             && path.is_bare()
         {
