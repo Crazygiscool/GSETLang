@@ -34,13 +34,11 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: cargo install cross --git https://github.com/cross-rs/cross
 
+      - name: Install rust target (macOS)
+        if: runner.os == 'macOS'
+        run: rustup target add ${{ matrix.target }}
       - name: Build release binary
-        run: |
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            cross build --release --target ${{ matrix.target }} -p gset-cli
-          else
-            cargo build --release --target ${{ matrix.target }} -p gset-cli
-          fi
+        run: cargo build --release --target ${{ matrix.target }} -p gset-cli
         shell: bash
 
       - name: Resolve artifact path
