@@ -1,0 +1,325 @@
+name: Publish Packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (for example v3.2.1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      windows_sha256: ${{ steps.assets.outputs.windows_sha256 }}
+      source_sha256: ${{ steps.assets.outputs.source_sha256 }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve tag and version
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            echo "::error::No release tag could be resolved"
+            exit 1
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG' does not match the vX.Y.Z format"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "::warning::Tag version '$VERSION' differs from Cargo.toml version '$CARGO_VERSION'"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download release assets and hash them
+        id: assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          FOUND=0
+          for _ in $(seq 1 40); do
+            if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx 'gset-windows-amd64.zip'; then
+              FOUND=1
+              break
+            fi
+            sleep 15
+          done
+          if [ "$FOUND" != "1" ]; then
+            echo "::error::gset-windows-amd64.zip never appeared on release $TAG"
+            exit 1
+          fi
+          mkdir -p dist
+          gh release download "$TAG" --pattern 'gset-windows-amd64.zip' --dir dist
+          curl -fsSL -o dist/source.tar.gz \
+            "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz"
+          WINDOWS_SHA256="$(sha256sum dist/gset-windows-amd64.zip | cut -d' ' -f1)"
+          SOURCE_SHA256="$(sha256sum dist/source.tar.gz | cut -d' ' -f1)"
+          echo "windows_sha256=$WINDOWS_SHA256" >> "$GITHUB_OUTPUT"
+          echo "source_sha256=$SOURCE_SHA256" >> "$GITHUB_OUTPUT"
+
+  chocolatey:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify Chocolatey API key
+        shell: bash
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        run: ': "${CHOCO_API_KEY:?CHOCO_API_KEY secret is not set}"'
+
+      - name: Stamp package files
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TAG="${{ needs.prepare.outputs.tag }}"
+          SHA="${{ needs.prepare.outputs.windows_sha256 }}"
+          sed -i "s|<version>.*</version>|<version>${VERSION}</version>|" packages/choco/gset.nuspec
+          sed -i "s|releases/tag/v[^<]*|releases/tag/${TAG}|" packages/choco/gset.nuspec
+          sed -i "s|releases/download/v[^/]*/gset-windows-amd64.zip|releases/download/${TAG}/gset-windows-amd64.zip|" \
+            packages/choco/tools/chocolateyInstall.ps1
+          sed -i "s|checksum64 = '[^']*'|checksum64 = '${SHA}'|" packages/choco/tools/chocolateyInstall.ps1
+
+      - name: Pack and push
+        shell: bash
+        working-directory: packages/choco
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          choco pack gset.nuspec
+          choco push "gset.${VERSION}.nupkg" --source https://push.chocolatey.org/ --api-key "$CHOCO_API_KEY"
+
+  aur:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install git and openssh
+        run: pacman -Syu --noconfirm --needed git openssh
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Trust AUR host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+
+      - name: Verify AUR credentials
+        shell: bash
+        env:
+          AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
+          AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
+        run: |
+          : "${AUR_USERNAME:?AUR_USERNAME secret is not set}"
+          : "${AUR_EMAIL:?AUR_EMAIL secret is not set}"
+
+      - name: Stamp PKGBUILD
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          SHA="${{ needs.prepare.outputs.source_sha256 }}"
+          sed -i "s|^pkgver=.*|pkgver=${VERSION}|" packages/aur/PKGBUILD
+          sed -i "s|sha256sums=('FILL_AFTER_RELEASE')|sha256sums=('${SHA}')|" packages/aur/PKGBUILD
+
+      - name: Generate .SRCINFO
+        shell: bash
+        run: |
+          set -euo pipefail
+          id builder > /dev/null 2>&1 || useradd -m builder
+          chown -R builder:builder packages/aur
+          sudo -u builder sh -c 'cd packages/aur && makepkg --printsrcinfo > .SRCINFO'
+          cat packages/aur/.SRCINFO
+
+      - name: Push gset package to AUR
+        shell: bash
+        env:
+          AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
+          AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          rm -rf /tmp/aur-gset
+          if git clone ssh://aur@aur.archlinux.org/gset.git /tmp/aur-gset 2> /tmp/aur-clone.log; then
+            echo "Cloned existing gset package"
+          else
+            echo "::warning::gset clone failed, creating a new AUR package: $(cat /tmp/aur-clone.log)"
+            mkdir -p /tmp/aur-gset
+            git -C /tmp/aur-gset init
+            git -C /tmp/aur-gset remote add origin ssh://aur@aur.archlinux.org/gset.git
+          fi
+          cp packages/aur/PKGBUILD packages/aur/.SRCINFO /tmp/aur-gset/
+          git -C /tmp/aur-gset add -A
+          if git -C /tmp/aur-gset diff --cached --quiet; then
+            echo "AUR package gset is already up to date"
+          else
+            git -C /tmp/aur-gset -c user.name="$AUR_USERNAME" -c user.email="$AUR_EMAIL" \
+              commit -m "Update to ${VERSION}"
+            git -C /tmp/aur-gset push origin HEAD:master
+          fi
+
+      - name: Deprecate gset-git package
+        shell: bash
+        env:
+          AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
+          AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/aur-gset-git
+          if ! git clone ssh://aur@aur.archlinux.org/gset-git.git /tmp/aur-gset-git 2> /tmp/aur-git-clone.log; then
+            echo "::warning::Skipping gset-git deprecation, clone failed: $(cat /tmp/aur-git-clone.log)"
+            exit 0
+          fi
+          if grep -q 'DEPRECATED' /tmp/aur-gset-git/PKGBUILD; then
+            echo "gset-git is already marked as deprecated"
+            exit 0
+          fi
+          sed -i 's|^pkgdesc="\([^"]*\)"$|pkgdesc="[DEPRECATED: use the gset package] \1"|' /tmp/aur-gset-git/PKGBUILD
+          sed -i "s|^pkgdesc='\([^']*\)'$|pkgdesc='[DEPRECATED: use the gset package] \1'|" /tmp/aur-gset-git/PKGBUILD
+          chown -R builder:builder /tmp/aur-gset-git
+          sudo -u builder sh -c 'cd /tmp/aur-gset-git && makepkg --printsrcinfo > .SRCINFO'
+          git -C /tmp/aur-gset-git add -A
+          if git -C /tmp/aur-gset-git diff --cached --quiet; then
+            echo "gset-git PKGBUILD was not modified, nothing to push"
+          else
+            git -C /tmp/aur-gset-git -c user.name="$AUR_USERNAME" -c user.email="$AUR_EMAIL" \
+              commit -m "Deprecate gset-git in favor of gset"
+            git -C /tmp/aur-gset-git push origin HEAD:master
+          fi
+
+  homebrew:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify tap credentials
+        shell: bash
+        env:
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          TAP_REPO: ${{ secrets.TAP_REPO }}
+        run: |
+          : "${HOMEBREW_TAP_DEPLOY_KEY:?HOMEBREW_TAP_DEPLOY_KEY secret is not set}"
+          : "${TAP_REPO:?TAP_REPO secret is not set}"
+
+      - name: Trust GitHub host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+
+      - name: Render formula and push to tap
+        shell: bash
+        env:
+          TAP_REPO: ${{ secrets.TAP_REPO }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.tag }}"
+          SHA="${{ needs.prepare.outputs.source_sha256 }}"
+          rm -rf /tmp/tap
+          if git clone "git@github.com:${TAP_REPO}.git" /tmp/tap 2> /tmp/tap-clone.log; then
+            echo "Cloned tap ${TAP_REPO}"
+          else
+            echo "::warning::Tap clone failed, creating a new repository: $(cat /tmp/tap-clone.log)"
+            mkdir -p /tmp/tap
+            git -C /tmp/tap init
+            git -C /tmp/tap remote add origin "git@github.com:${TAP_REPO}.git"
+          fi
+          mkdir -p /tmp/tap/Formula
+          sed -e "s|archive/refs/tags/v[^\"]*\.tar\.gz|archive/refs/tags/${TAG}.tar.gz|" \
+              -e "s|sha256 \"[^\"]*\"|sha256 \"${SHA}\"|" \
+              packages/homebrew/Formula/gset.rb > /tmp/tap/Formula/gset.rb
+          git -C /tmp/tap add Formula/gset.rb
+          if git -C /tmp/tap diff --cached --quiet; then
+            echo "Tap formula is already up to date"
+          else
+            git -C /tmp/tap -c user.name="GSET Team" -c user.email="noreply@github.com" \
+              commit -m "gset ${TAG}"
+            git -C /tmp/tap push origin HEAD:HEAD
+          fi
+
+  winget:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify winget token
+        shell: bash
+        env:
+          WINGET_PAT: ${{ secrets.WINGET_PAT }}
+        run: ': "${WINGET_PAT:?WINGET_PAT secret is not set}"'
+
+      - name: Stamp manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TAG="${{ needs.prepare.outputs.tag }}"
+          SHA="${{ needs.prepare.outputs.windows_sha256 }}"
+          SRC="manifests/g/GSETLang/GSET/3.2.1"
+          DEST="manifests/g/GSETLang/GSET/${VERSION}"
+          if [ "$SRC" != "$DEST" ]; then
+            rm -rf "$DEST"
+            mkdir -p "$DEST"
+            cp "$SRC"/*.yaml "$DEST"/
+          fi
+          sed -i "s|^PackageVersion:.*|PackageVersion: ${VERSION}|" "$DEST"/*.yaml
+          sed -i "s|releases/download/v[^/]*/gset-windows-amd64.zip|releases/download/${TAG}/gset-windows-amd64.zip|" "$DEST"/*.yaml
+          sed -i "s|^  InstallerSha256:.*|  InstallerSha256: ${SHA}|" "$DEST/GSETLang.GSET.installer.yaml"
+          cat "$DEST"/*.yaml
+
+      - name: Submit to winget-pkgs
+        shell: pwsh
+        env:
+          WINGET_PAT: ${{ secrets.WINGET_PAT }}
+        run: |
+          $version = "${{ needs.prepare.outputs.version }}"
+          $dir = "manifests/g/GSETLang/GSET/$version"
+          Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          ./wingetcreate.exe submit $dir --prtitle "New version: GSETLang.GSET $version" --token $env:WINGET_PAT --no-open
