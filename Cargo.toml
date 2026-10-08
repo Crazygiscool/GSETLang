@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "3.2.1"
+version = "3.3.0"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
@@ -19,12 +19,12 @@ authors = ["GSET Team"]
 
 [workspace.dependencies]
 # Internal crates
-gset-ir = { path = "crates/gset-ir", version = "3.2.1" }
-gset-frontend = { path = "crates/gset-frontend", version = "3.2.1" }
-gset-backend = { path = "crates/gset-backend", version = "3.2.1" }
-gset-semantic = { path = "crates/gset-semantic", version = "3.2.1" }
-gset-deps = { path = "crates/gset-deps", version = "3.2.1" }
-gset-cli = { path = "crates/gset-cli", version = "3.2.1" }
+gset-ir = { path = "crates/gset-ir", version = "3.3.0" }
+gset-frontend = { path = "crates/gset-frontend", version = "3.3.0" }
+gset-backend = { path = "crates/gset-backend", version = "3.3.0" }
+gset-semantic = { path = "crates/gset-semantic", version = "3.3.0" }
+gset-deps = { path = "crates/gset-deps", version = "3.3.0" }
+gset-cli = { path = "crates/gset-cli", version = "3.3.0" }
 
 # External
 clap = { version = "4.5", features = ["derive"] }

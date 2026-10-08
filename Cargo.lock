@@ -162,7 +162,7 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "gset-backend"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "gset-ir",
  "thiserror",
@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "gset-cli"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "clap",
  "gset-backend",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "gset-deps"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "gset-ir",
  "gset-semantic",
@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "gset-frontend"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "gset-ir",
  "thiserror",
@@ -206,14 +206,14 @@ dependencies = [
 
 [[package]]
 name = "gset-ir"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "gset-semantic"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "gset-frontend",
  "gset-ir",
