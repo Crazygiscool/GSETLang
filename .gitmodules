@@ -2,3 +2,6 @@
 	path = GSETLang-Docs
 	url = git@github.com:Crazygiscool/GSETLang-Docs.git
 	branch = main
+[submodule "homebrew-gset"]
+	path = homebrew-gset
+	url = git@github.com:Crazygiscool/homebrew-gset.git
