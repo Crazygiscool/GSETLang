@@ -9,10 +9,5 @@ Installers:
   NestedInstallerFiles:
   - RelativeFilePath: gset.exe
     PortableCommandAlias: gset
-  InstallerSwitches:
-    Silent: /S
-    SilentWithProgress: /S
-  ValidArchitectures:
-  - x64
 ManifestType: installer
 ManifestVersion: 1.6.0
