@@ -96,7 +96,7 @@ jobs:
             DEB_ARCH="arm64"
           fi
           mkdir -p target/debian
-          cargo deb --no-strip --package gset-cli --target ${{ matrix.target }} -o target/debian/gset-${{ steps.version.outputs.VERSION }}-${DEB_ARCH}.deb 2>/dev/null || true
+          cargo deb --no-build --no-strip --package gset-cli --target ${{ matrix.target }} -o target/debian/gset-${{ steps.version.outputs.VERSION }}-${DEB_ARCH}.deb
 
       - name: Upload Debian packages
         if: matrix.os == 'ubuntu-latest'
