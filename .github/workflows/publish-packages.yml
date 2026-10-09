@@ -222,13 +222,14 @@ jobs:
           sed -i "s|^pkgdesc='\([^']*\)'$|pkgdesc='[DEPRECATED: use the gset package] \1'|" /tmp/aur-gset-git/PKGBUILD
           chown -R builder:builder /tmp/aur-gset-git
           sudo -u builder sh -c 'cd /tmp/aur-gset-git && makepkg --printsrcinfo > .SRCINFO'
-          git -C /tmp/aur-gset-git add -A
-          if git -C /tmp/aur-gset-git diff --cached --quiet; then
+          git -C /tmp/aur-gset-git -c safe.directory=/tmp/aur-gset-git add -A
+          if git -C /tmp/aur-gset-git -c safe.directory=/tmp/aur-gset-git diff --cached --quiet; then
             echo "gset-git PKGBUILD was not modified, nothing to push"
           else
-            git -C /tmp/aur-gset-git -c user.name="$AUR_USERNAME" -c user.email="$AUR_EMAIL" \
+            git -C /tmp/aur-gset-git -c safe.directory=/tmp/aur-gset-git \
+              -c user.name="$AUR_USERNAME" -c user.email="$AUR_EMAIL" \
               commit -m "Deprecate gset-git in favor of gset"
-            git -C /tmp/aur-gset-git push origin HEAD:master
+            git -C /tmp/aur-gset-git -c safe.directory=/tmp/aur-gset-git push origin HEAD:master
           fi
 
   homebrew:
