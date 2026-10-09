@@ -198,8 +198,6 @@ main() {
     echo "============================================"
     echo ""
     
-    local INSTALL_DIR="${HOME}/.local/bin"
-    
     # Create install directory
     mkdir -p "$INSTALL_DIR"
     
