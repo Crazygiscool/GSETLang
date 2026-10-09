@@ -178,7 +178,7 @@ jobs:
         env:
           AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
           AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
-          GIT_SSH_COMMAND: ssh -i ${HOME}/.ssh/id_gset
+          GIT_SSH_COMMAND: ssh -i ${HOME}/.ssh/id_gset -o StrictHostKeyChecking=accept-new
         run: |
           set -euo pipefail
           VERSION="${{ needs.prepare.outputs.version }}"
@@ -206,7 +206,7 @@ jobs:
         env:
           AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
           AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
-          GIT_SSH_COMMAND: ssh -i ${HOME}/.ssh/id_gset
+          GIT_SSH_COMMAND: ssh -i ${HOME}/.ssh/id_gset -o StrictHostKeyChecking=accept-new
         run: |
           set -euo pipefail
           rm -rf /tmp/aur-gset-git
@@ -268,7 +268,7 @@ jobs:
         shell: bash
         env:
           TAP_REPO: ${{ secrets.TAP_REPO }}
-          GIT_SSH_COMMAND: ssh -i ${HOME}/.ssh/id_gset
+          GIT_SSH_COMMAND: ssh -i ${HOME}/.ssh/id_gset -o StrictHostKeyChecking=accept-new
         run: |
           set -euo pipefail
           TAG="${{ needs.prepare.outputs.tag }}"
