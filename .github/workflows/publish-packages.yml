@@ -337,10 +337,10 @@ jobs:
           $version = "${{ needs.prepare.outputs.version }}"
           $title = "New version: GSETLang.GSET $version"
           $headers = @{ Authorization = "token $env:WINGET_PAT"; "User-Agent" = "GSETLang-publish" }
-          $q = [System.Uri]::EscapeDataString('repo:microsoft/winget-pkgs is:pr in:title "' + $title + '"')
+          $q = [System.Uri]::EscapeDataString('repo:microsoft/winget-pkgs is:pr is:open in:title "' + $title + '"')
           $resp = Invoke-RestMethod -Uri "https://api.github.com/search/issues?q=$q" -Headers $headers
           if ($resp.total_count -gt 0) {
-            Write-Host "::notice::Found existing winget PRs for $title"
+            Write-Host "::notice::Found open winget PR(s) for $title"
             foreach ($item in $resp.items) { Write-Host "::notice::  #$($item.number) $($item.title) [state=$($item.state)]" }
             [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "skip=true`n")
           } else {
