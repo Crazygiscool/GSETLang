@@ -292,7 +292,7 @@ jobs:
           else
             git -C /tmp/tap -c user.name="GSET Team" -c user.email="noreply@github.com" \
               commit -m "gset ${TAG}"
-            git -C /tmp/tap push origin HEAD:HEAD
+            git -C /tmp/tap push origin HEAD
           fi
 
   winget:
