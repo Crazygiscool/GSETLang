@@ -136,10 +136,15 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
 
-      - name: Setup SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      - name: Setup SSH key
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_gset
+          chmod 600 ~/.ssh/id_gset
 
       - name: Verify AUR credentials
         shell: bash
@@ -173,6 +178,7 @@ jobs:
         env:
           AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
           AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
+          GIT_SSH_COMMAND: ssh -i ${HOME}/.ssh/id_gset
         run: |
           set -euo pipefail
           VERSION="${{ needs.prepare.outputs.version }}"
@@ -200,6 +206,7 @@ jobs:
         env:
           AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
           AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
+          GIT_SSH_COMMAND: ssh -i ${HOME}/.ssh/id_gset
         run: |
           set -euo pipefail
           rm -rf /tmp/aur-gset-git
@@ -247,15 +254,21 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts
 
-      - name: Setup SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+      - name: Setup SSH key
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_gset
+          chmod 600 ~/.ssh/id_gset
 
       - name: Render formula and push to tap
         shell: bash
         env:
           TAP_REPO: ${{ secrets.TAP_REPO }}
+          GIT_SSH_COMMAND: ssh -i ${HOME}/.ssh/id_gset
         run: |
           set -euo pipefail
           TAG="${{ needs.prepare.outputs.tag }}"
